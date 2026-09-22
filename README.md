@@ -61,7 +61,7 @@ curl https://api.codiv.ai/v1/systemone \
 |---|---|
 | `POST /v1/systemone` | `{state, model, questions}` → `{model, answers, usage}` |
 | `POST /v1/chat/completions` | OpenAI-style text generation with model `diffusiongemma-26b` ([below](#text-generation)) |
-| `GET /v1/models` | `openjev-0.1` and its alias `openjev-latest`. The server also accepts `jev-latest` and `jev-preview`, so TypeSafe SDK defaults work. The list includes `diffusiongemma-26b`. |
+| `GET /v1/models` | `openjev-0.1` and its alias `openjev-latest`. The server also accepts `jev-latest` and `jev-preview`, so TypeSafe SDK defaults work. The list includes `diffusiongemma-26b`, and the [small encoder models](#small-encoder-models) when they run beside it. |
 
 Question types:
 
@@ -321,13 +321,60 @@ weights. 16 concurrent requests finish at about 4 req/s.
 OPENJEV_MLX_TEST_MODEL=path/to/weights pytest tests/test_mlx_model.py   # tests against the real model
 ```
 
+### Small encoder models
+
+OpenJev also serves two small System One models from other authors. Each is a bidirectional
+encoder with a classification head, not a diffusion model. It reads each question in one
+forward pass, so an answer is still a distribution over your options.
+
+| Model id | Model | Size | State limit | Choices |
+|---|---|---|---|---|
+| `laya-typed-decisions` | [convaiinnovations/laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) ([Laya](https://github.com/NandhaKishorM/laya), Convai Innovations). ModernBERT-large, fine-tuned on the typed-decisions workflows. | 421M | 1,024 tokens, options included | up to 128. The options share 256 tokens, so with many options each is cut to a few tokens. Keep to about 20, or split the question. |
+| `verdict-151m` | [heman10x/rlcd-modernbert-151m](https://huggingface.co/heman10x/rlcd-modernbert-151m) ([Verdict](https://github.com/Heman10x-NGU/Verdict-open-jev)). ModernBERT-base with a GLiClass head, calibrated per option count. | 151M | 512 tokens, options included | up to 24 |
+
+Each model runs in its own container on the same API server: `OPENJEV_BACKEND=laya` or
+`OPENJEV_BACKEND=verdict`. `docker compose up -d` starts both beside the vLLM container on the
+same GPU. The `openjev` container passes a request for either model through to its container
+(`OPENJEV_MODEL_ROUTES`), so `:8080` serves all three models. Together they need about 4 GB of
+GPU memory, so set `OPENJEV_GPU_UTIL` to leave that much free. `/v1/models` lists the routed
+models even when their containers are not running; a request for one then gets a 503.
+
+To run one alone, on a GPU or on the CPU:
+
+```bash
+docker build -f docker/Dockerfile.encoder --build-arg BACKEND=laya -t openjev-laya .
+docker run -d --gpus all -p 127.0.0.1:8081:8080 \
+  -v ~/.cache/huggingface:/root/.cache/huggingface openjev-laya
+# or without Docker:
+pip install -e '.[laya]' && OPENJEV_BACKEND=laya python -m openjev
+```
+
+A server that runs one of these models alone also accepts `jev-latest` and `jev-preview` for it.
+
+Differences from the DiffusionGemma model:
+
+- Text only. `images`, `steps` above 1, `samples` above 1, `think` and `sequential` get a 400.
+- A state longer than the limit is cut at the end without an error. `usage.input_tokens` counts
+  what the model read. Each question is its own sequence, so each question bills the state again.
+- Verdict adds an "insufficient evidence" option to every question. OpenJev drops its
+  probability and scales the others to sum to 1, as Jev's answer shapes require. Verdict
+  also ignores a noul's `criteria`.
+- Laya rounds each probability to 4 decimal places.
+- The Verdict prompt format and temperatures are copied from Verdict's inference engine
+  (v1.4). For the same input, the probabilities match that engine's own output.
+
 ### Settings
 
 The server reads its settings from the environment.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `OPENJEV_BACKEND` | `vllm` | `mlx` to run the model in-process on Apple silicon |
+| `OPENJEV_BACKEND` | `vllm` | `mlx` to run the model in-process on Apple silicon. `laya` or `verdict` for a [small encoder model](#small-encoder-models) |
+| `OPENJEV_MODEL_ROUTES` | unset | `name=url,...`: other OpenJev servers. A request for one of those model names goes to that server unchanged. |
+| `OPENJEV_LAYA_MODEL` | `convaiinnovations/laya-typed-decisions` | Laya weights: a local directory or a Hugging Face id |
+| `OPENJEV_VERDICT_MODEL` | `heman10x/rlcd-modernbert-151m` | Verdict weights: a local directory or a Hugging Face id |
+| `OPENJEV_DEVICE` | unset | `laya`/`verdict`: `cuda` or `cpu`. Unset uses CUDA when there is a GPU |
+| `OPENJEV_ENCODER_BATCH` | `16` | `laya`/`verdict`: most questions in one forward pass. A larger request uses more passes. |
 | `OPENJEV_UPSTREAM` | unset | external vLLM server URL. When set, the container does not start its own |
 | `OPENJEV_MODEL` | `nvidia/diffusiongemma-26B-A4B-it-NVFP4` | weights the built-in vLLM serves |
 | `OPENJEV_MLX_MODEL` | `mlx-community/diffusiongemma-26B-A4B-it-4bit` | MLX weights: a local directory or a Hugging Face id. Also supplies the tokenizer. `8bit` and `bf16` builds exist too. |
@@ -371,4 +418,5 @@ pip install -e '.[test]' && pytest
 
 ## License
 
-Apache-2.0. The DiffusionGemma weights are Apache-2.0 (NVIDIA / Google).
+Apache-2.0. The DiffusionGemma weights are Apache-2.0 (NVIDIA / Google). The Laya
+(Convai Innovations) and Verdict (Heman10x) weights and code are Apache-2.0.

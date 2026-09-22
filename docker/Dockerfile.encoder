@@ -1,0 +1,26 @@
+# OpenJev with a small encoder System One model instead of DiffusionGemma:
+#   docker build -f docker/Dockerfile.encoder --build-arg BACKEND=laya    -t razorback16/openjev-laya .
+#   docker build -f docker/Dockerfile.encoder --build-arg BACKEND=verdict -t razorback16/openjev-verdict .
+# Same API server, no vLLM. The model is loaded in process with PyTorch, on the GPU when
+# one is visible. Both models are small (under 1 GB of weights), so they can share a GPU
+# with the vLLM container.
+FROM python:3.12-slim
+
+ARG BACKEND
+ENV PYTHONUNBUFFERED=1 UV_LINK_MODE=copy OPENJEV_BACKEND=${BACKEND} \
+    OPENJEV_HOST=0.0.0.0 OPENJEV_PORT=8080
+COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /usr/local/bin/uv
+
+# torch from PyTorch's CUDA 13.0 index: its kernels include sm_120 (Blackwell)
+RUN test -n "$BACKEND" \
+    && uv pip install --system --no-cache torch==2.14.0 --index-url https://download.pytorch.org/whl/cu130
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY openjev ./openjev
+RUN uv pip install --system --no-cache ".[${BACKEND}]"
+
+EXPOSE 8080
+HEALTHCHECK --interval=15s --timeout=3s --start-period=300s \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')" || exit 1
+CMD ["python", "-m", "openjev"]

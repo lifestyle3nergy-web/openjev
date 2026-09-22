@@ -1,5 +1,7 @@
 # OpenJev: vLLM (DiffusionGemma structured reads) and the Jev-compatible API on :8080,
-# in one container.
+# in one container. Two small encoder models run beside it on the same GPU, each
+# in its own container; the openjev container passes their requests through, so
+# :8080 serves all three models.
 services:
   openjev:
     build: {context: ., dockerfile: docker/Dockerfile}
@@ -11,6 +13,7 @@ services:
       OPENJEV_GPU_UTIL: ${OPENJEV_GPU_UTIL:-0.9}
       OPENJEV_API_KEY: ${OPENJEV_API_KEY:-}
       OPENJEV_ORIGIN_SECRET: ${OPENJEV_ORIGIN_SECRET:-}
+      OPENJEV_MODEL_ROUTES: laya-typed-decisions=http://laya:8080,verdict-151m=http://verdict:8080
       HF_TOKEN: ${HF_TOKEN:-}
     volumes:
       - ${HF_HOME:-~/.cache/huggingface}:/root/.cache/huggingface
@@ -18,10 +21,34 @@ services:
     ports:
       - "${OPENJEV_BIND:-127.0.0.1}:8080:8080"
     ipc: host
-    deploy:
+    deploy: &gpu
       resources:
         reservations:
           devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
+    restart: unless-stopped
+
+  # The encoder models take about 2.5 GB (Laya) and 1.2 GB (Verdict) of GPU memory.
+  # Lower OPENJEV_GPU_UTIL to leave vLLM's neighbours that much room.
+  laya:
+    build: {context: ., dockerfile: docker/Dockerfile.encoder, args: {BACKEND: laya}}
+    image: razorback16/openjev-laya:0.4.0
+    environment: &encoder-env
+      # the openjev container forwards the caller's key and origin secret, so these match it
+      OPENJEV_API_KEY: ${OPENJEV_API_KEY:-}
+      OPENJEV_ORIGIN_SECRET: ${OPENJEV_ORIGIN_SECRET:-}
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes: &hf
+      - ${HF_HOME:-~/.cache/huggingface}:/root/.cache/huggingface
+    deploy: *gpu
+    restart: unless-stopped
+
+  verdict:
+    build: {context: ., dockerfile: docker/Dockerfile.encoder, args: {BACKEND: verdict}}
+    image: razorback16/openjev-verdict:0.4.0
+    environment: *encoder-env
+    volumes: *hf
+    deploy: *gpu
     restart: unless-stopped
 
 volumes:

@@ -5,6 +5,10 @@ so their SDKs work against this server by pointing TYPESAFE_BASE_URL at it.
 Optional request fields beyond that contract (images, steps, samples, think,
 sequential) are ignored by the SDKs and change nothing when left out.
 POST /v1/chat/completions (openjev.chat) serves ordinary text generation.
+
+OPENJEV_BACKEND picks what answers: DiffusionGemma through vLLM or MLX, or one
+of the small encoder models (openjev.encoders). A request for a model listed in
+OPENJEV_MODEL_ROUTES is passed through to the OpenJev container serving it.
 """
 import base64
 import binascii
@@ -20,12 +24,12 @@ from typing import Annotated, Any, Literal, Union
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import __version__
 from .chat import Generator, MlxGenerator, add_chat_routes
-from .config import MODEL_ALIASES, MODEL_VERSION, MODELS, Settings
+from .config import ENCODER_MODELS, Settings, served_models
 from .engine import Engine, Overloaded, SchemaError, Upstream, model_ns
 
 JSONContent = Union[str, dict[str, Any], list[Any]]
@@ -147,12 +151,25 @@ def semantic_error(loc, msg, request=None):
 
 def create_app(settings=None, tokenizer=None):
     settings = settings or Settings()
-    if settings.backend not in ("vllm", "mlx"):
-        raise ValueError(f"unknown backend {settings.backend!r}; use \"vllm\" or \"mlx\"")
+    if settings.backend not in ("vllm", "mlx", *ENCODER_MODELS):
+        raise ValueError(f"unknown backend {settings.backend!r}; use one of vllm, mlx, {', '.join(ENCODER_MODELS)}")
     mlx = settings.backend == "mlx"
+    encoder = settings.backend in ENCODER_MODELS
+    model_version, model_names, own_models = served_models(settings.backend)
+    known = {m["name"]: m for m in ENCODER_MODELS.values()}
+    models_list = own_models + [known.get(name, {"name": name, "description": "", "release_date": ""})
+                                for name in settings.model_routes if name not in model_names]
 
     @asynccontextmanager
     async def lifespan(app):
+        app.state.routes = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0))
+        if encoder:
+            from .encoders import ENGINES
+            app.state.engine = ENGINES[settings.backend](settings)
+            yield
+            await app.state.engine.close()
+            await app.state.routes.aclose()
+            return
         tok = tokenizer
         if tok is None:
             from transformers import AutoTokenizer
@@ -165,6 +182,7 @@ def create_app(settings=None, tokenizer=None):
         yield
         await app.state.engine.close()
         await app.state.generator.close()
+        await app.state.routes.aclose()
 
     app = FastAPI(title="OpenJev", version=__version__, lifespan=lifespan)
 
@@ -216,11 +234,13 @@ def create_app(settings=None, tokenizer=None):
 
     @app.get("/v1/models")
     async def models():
-        return {"models": MODELS}
+        return {"models": models_list}
 
     @app.post("/v1/systemone")
     async def systemone(req: SystemOneRequest, request: Request):
-        if req.model not in MODEL_ALIASES:
+        if req.model in settings.model_routes and req.model not in model_names:
+            return await forward(request, settings.model_routes[req.model])
+        if req.model not in model_names:
             # Jev's shape for a model it doesn't serve
             return error(400, "api_usage_error", f"Unknown model: {req.model}")
         questions = {k: q.model_dump() for k, q in req.questions.items()}
@@ -241,12 +261,28 @@ def create_app(settings=None, tokenizer=None):
         except httpx.HTTPError as e:
             return error(503, "api_error", f"inference backend unavailable: {type(e).__name__}", {"retry-after": "2"})
         # output_tokens stays 0 as in Jev's contract unless a thought was generated
-        return {"model": MODEL_VERSION, "answers": answers,
+        return {"model": model_version, "answers": answers,
                 "usage": {"input_tokens": input_tokens, "output_tokens": thought_tokens}}
 
-    add_chat_routes(app)
+    if not encoder:
+        add_chat_routes(app)
 
     return app
+
+
+FORWARD_HEADERS = ("authorization", "x-origin-secret", "content-type")
+
+
+async def forward(request, url):
+    """Pass a request through to the container serving its model, and its answer back
+    unchanged: that container applies the same contract and its own auth."""
+    headers = {h: request.headers[h] for h in FORWARD_HEADERS if h in request.headers}
+    try:
+        r = await request.app.state.routes.post(url + "/v1/systemone", content=await request.body(), headers=headers)
+    except httpx.HTTPError as e:
+        return error(503, "api_error", f"inference backend unavailable: {type(e).__name__}", {"retry-after": "2"})
+    keep = {h: r.headers[h] for h in ("content-type", "retry-after") if h in r.headers}
+    return Response(r.content, status_code=r.status_code, headers=keep)
 
 
 def check_auth(settings, request):
