@@ -22,7 +22,8 @@ VOCAB = 262144
 TURN_CLOSE = 106
 PAD = 0
 TOPK = 20
-MAX_LABEL_IDS = 128  # vLLM's logprob_token_ids cap per request
+MAX_LABEL_IDS = 512  # vLLM's logprob_token_ids cap per request; the image raises it from 128
+MAX_CHOICES = 255  # Jev's limit on one choice's options
 SCAFFOLD_TEXT = "<|channel>thought\n<channel|>"  # the empty thought block the chat template leaves to the model
 
 # Answer template shapes: (join between questions, what precedes the label,
@@ -92,7 +93,7 @@ class Engine:
             if len(e) == len(base) and e[:-1] == base[:-1] and e[-1] not in seen:
                 seen.add(e[-1])
                 out.append(c)
-            if len(out) == MAX_LABEL_IDS:
+            if len(out) == MAX_CHOICES:
                 break
         return out
 
@@ -199,7 +200,10 @@ class Engine:
 
     def groups(self, qs, fmt):
         """Split questions, in order, into the fewest groups whose answer
-        templates fit the canvas."""
+        templates fit the canvas. One read's exact label ids are never the
+        binding limit: every question draws its labels from the same lists, so
+        a whole schema's union is at most 255 choice letters, ten score digits
+        and yes/no, well inside MAX_LABEL_IDS."""
         out, group = [], []
         for q in qs:
             trial = group + [q]
@@ -238,16 +242,28 @@ class Engine:
         return r.json()
 
     def _xargs(self, template, slots, seed, steps):
-        return {"diffusion_seed_canvas": self.build_canvas(template, slots, seed),
-                "diffusion_canvas_length": self.canvas_width(template),
-                "diffusion_max_steps": steps, "diffusion_read_only": True}
+        width = self.canvas_width(template)
+        xargs = {"diffusion_seed_canvas": self.build_canvas(template, slots, seed),
+                 "diffusion_canvas_length": width,
+                 "diffusion_max_steps": steps, "diffusion_read_only": True}
+        if steps > 1:
+            # Past one step, accept/renoise rewrites whatever it did not pin, so
+            # hold every position but the answer slots at the seeded template.
+            free = {s["pos"] for s in slots}
+            xargs["diffusion_pinned"] = [p for p in range(width) if p not in free]
+        return xargs
 
     async def one_read(self, template, slots, sys_text, content, seed, steps=1, prefix=None):
         """One read-only denoise over a seeded canvas. ``content`` is the user
         turn: the state text, or image parts followed by it. With ``prefix``
         (prompt token ids that already hold a thought or earlier answers) the
         read continues that prompt through the completions endpoint instead."""
-        label_ids = sorted({i for s in slots for i in s["label_ids"]})[:MAX_LABEL_IDS]
+        label_ids = sorted({i for s in slots for i in s["label_ids"]})
+        if len(label_ids) > MAX_LABEL_IDS:
+            # groups() splits ahead of this; a read that still asks for more
+            # would get silently truncated evidence, so refuse it instead.
+            raise SchemaError(f"the questions of one read need {len(label_ids)} label tokens; "
+                              f"a read allows {MAX_LABEL_IDS}. Ask them in separate requests.")
         if prefix is not None:
             d = await self._post("/v1/completions", {
                 "model": self.s.upstream_model, "prompt": prefix, "max_tokens": len(template) + 1,

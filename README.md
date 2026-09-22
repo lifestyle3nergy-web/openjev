@@ -84,7 +84,6 @@ Errors follow the same shapes as Jev, checked against the live API:
 
 Known differences from Jev:
 
-- A choice can have at most 128 options. Jev allows 255. The refusal reads the same.
 - Model names are OpenJev's own. `jev-latest` and `jev-preview` are aliases. A pinned Jev
   version such as `jev-1.13.0` answers `400` `Unknown model`.
 - A choice with one option, or a score with one level, gets a direct answer (probability 1)
@@ -191,8 +190,9 @@ If any slot is uncertain (entropy > 0.1), OpenJev re-reads with fresh noise up t
 and averages the results. Question ids never reach the model: it sees `q1`, `q2`, `q3`.
 
 The vLLM side of this is
-[vllm-project/vllm#57250](https://github.com/vllm-project/vllm/pull/57250), which adds seeded
-canvases, read-only steps and step caps for DiffusionGemma. `openjev/engine.py` is adapted from
+[vllm-project/vllm#57250](https://github.com/vllm-project/vllm/pull/57250), merged on 2026-09-22,
+which adds seeded canvases, read-only steps, step caps and pinned canvas positions for
+DiffusionGemma. `openjev/engine.py` is adapted from
 that PR's `structured_server.py` example. It adds async I/O, bounded concurrency and
 backpressure.
 
@@ -216,8 +216,8 @@ You need an NVIDIA GPU with at least 24 GB of memory for the NVFP4 checkpoint (t
 RTX PRO 6000 Blackwell, sm_120).
 
 A prebuilt image is on Docker Hub, so there is nothing to compile.
-[`razorback16/openjev`](https://hub.docker.com/r/razorback16/openjev) runs vLLM with PR #57250
-in one container with the Jev-compatible API server. It uses CUDA 13 and the
+[`razorback16/openjev`](https://hub.docker.com/r/razorback16/openjev) runs vLLM's DiffusionGemma
+structured reads (PR #57250) in one container with the Jev-compatible API server. It uses CUDA 13 and the
 [pin below](#caveats).
 
 ```bash
@@ -230,7 +230,7 @@ Or without compose:
 
 ```bash
 docker run -d --gpus all --ipc=host -p 127.0.0.1:8080:8080 \
-  -v ~/.cache/huggingface:/root/.cache/huggingface razorback16/openjev:0.3.0
+  -v ~/.cache/huggingface:/root/.cache/huggingface razorback16/openjev:0.4.0
 ```
 
 The model weights (about 18 GB) download on first start into `~/.cache/huggingface`. Use
@@ -250,10 +250,12 @@ states:
 Without Docker:
 
 ```bash
-git clone https://github.com/razorback16/vllm && cd vllm
-git checkout baa833874881ba62cef99e0c5b716fb136c4a009   # the same commit the image pins
+git clone https://github.com/vllm-project/vllm && cd vllm
+git checkout 1b3b88ec2b7457aa030db4d0e7d8aaf04f6d0fb8   # the same commit the image pins
+# a choice of more than 128 options needs the image's one-line cap change
+sed -i 's/^MAX_LOGPROB_TOKEN_IDS = 128$/MAX_LOGPROB_TOKEN_IDS = 512/' vllm/sampling_params.py
 VLLM_USE_PRECOMPILED=1 \
-  VLLM_PRECOMPILED_WHEEL_COMMIT=36fa72d2d0d2f86c7c83e1e99c9012b7bd26463b pip install -e .
+  VLLM_PRECOMPILED_WHEEL_COMMIT=1b3b88ec2b7457aa030db4d0e7d8aaf04f6d0fb8 pip install -e .
 vllm serve nvidia/diffusiongemma-26B-A4B-it-NVFP4 --served-model-name dgemma \
   --diffusion-config '{"canvas_length": 64}' --max-logprobs 32 --enable-prefix-caching \
   --async-scheduling --attention-backend TRITON_ATTN \
@@ -277,7 +279,8 @@ OPENJEV_BACKEND=mlx python -m openjev     # 127.0.0.1:8080
 `/v1/systemone` answers reads with the same prompts, canvases and seeds as the vLLM backend,
 including `images`, `samples`, `sequential`, `steps` and the automatic re-reads. Each denoise
 step past the first reuses the one prefill of the prompt and writes back only the answer slots,
-so the template cannot drift: more steps cost GPU time, not prompt tokens. `think` writes the
+so the template cannot drift: more steps cost GPU time, not prompt tokens. On vLLM the same
+holds because a multi-step read pins every canvas position but the answer slots. `think` writes the
 thought with mlx-vlm's own denoise loop, then reads after it, and bills exactly as vLLM does.
 
 An image read builds its prompt with the mlx-vlm processor, which expands each image into its
@@ -322,17 +325,13 @@ The server reads its settings from the environment.
 
 ## Caveats
 
-- vllm-project/vllm#57250 has not merged yet. The request fields it uses (`vllm_xargs`) are
-  provisional, so this project pins a commit
-  ([`razorback16/vllm` branch `structured-reads-57250-rebased`](https://github.com/razorback16/vllm/tree/structured-reads-57250-rebased)).
-  That branch is the PR's head plus three fixes that keep vLLM's engine from crashing:
-  - vllm-project/vllm#54309, for any request with an image (vllm-project/vllm#56712).
-  - The sampler step fell back to eager code with a dtype mismatch once torch.compile hit its
-    recompile limit. This broke multi-step reads and text generation.
-  - Logprobs stashed at different steps could not join when reads and generations shared a batch.
-
-  The branch also carries vllm-project/vllm#57416, which merged upstream after the PR's base.
-  Without it, a prefill-only batch gets the wrong number of logit rows.
+- vllm-project/vllm#57250 merged on 2026-09-22, so this project now pins upstream vLLM at that
+  merge commit rather than a fork. The image still makes one change to it: upstream allows 128
+  exact label ids per request, and a 255-option choice needs more, so the build raises that cap
+  to 512.
+- The model's config asks for bidirectional attention inside each image
+  (`use_bidirectional_attention: "vision"`), which vLLM's DiffusionGemma prefill does not yet
+  apply. Image answers are still read from a causal prefill.
 - Answer quality is the quality of DiffusionGemma 26B-A4B used in this mode. Evaluate it on your
   own tasks before you rely on it.
 

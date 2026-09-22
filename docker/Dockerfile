@@ -1,16 +1,15 @@
-# OpenJev in one image: vLLM with PR #57250 (DiffusionGemma structured reads)
-# plus the Jev-compatible API server. The pin is the PR's head plus three fixes
-# that keep the engine alive: vllm-project/vllm#54309 (image input) and two
-# sampler fixes (eager fallback after torch.compile's recompile limit; logprob
-# stashes of different widths). It also carries #57416, which merged upstream
-# after the PR's base. Move back to mmastrac/vllm once the PR carries them.
-# The PR only touches Python, so the compiled kernels come from the upstream
-# nightly wheel of the fork's merge-base commit: no CUDA build.
+# OpenJev in one image: vLLM with DiffusionGemma structured reads plus the
+# Jev-compatible API server. PR #57250 merged on 2026-09-22, carrying the two
+# sampler fixes we ran on a fork (eager fallback past torch.compile's recompile
+# limit; logprob stashes of different widths), so the pin is now upstream's own
+# merge commit. Its image-input fix came in separately, as #57589.
+# The commit has a published wheel, so the compiled kernels are downloaded
+# rather than built: no CUDA build here.
 FROM nvidia/cuda:13.0.1-devel-ubuntu24.04
 
-ARG VLLM_REPO=https://github.com/razorback16/vllm
-ARG VLLM_COMMIT=baa833874881ba62cef99e0c5b716fb136c4a009
-ARG VLLM_BASE_COMMIT=36fa72d2d0d2f86c7c83e1e99c9012b7bd26463b
+ARG VLLM_REPO=https://github.com/vllm-project/vllm
+ARG VLLM_COMMIT=1b3b88ec2b7457aa030db4d0e7d8aaf04f6d0fb8
+ARG VLLM_BASE_COMMIT=1b3b88ec2b7457aa030db4d0e7d8aaf04f6d0fb8
 
 ENV DEBIAN_FRONTEND=noninteractive UV_LINK_MODE=copy PATH=/opt/venv/bin:$PATH \
     UV_PYTHON_INSTALL_DIR=/opt/python
@@ -19,6 +18,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-cer
 COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /usr/local/bin/uv
 
 RUN git clone --filter=blob:none "$VLLM_REPO" /opt/vllm && git -C /opt/vllm checkout "$VLLM_COMMIT"
+# A choice may have 255 options, and one read asks for every option's exact
+# logprob. Upstream's cap of 128 ids per request is the only thing in the way;
+# it also sizes a per-request buffer in the logprob kernel (512 ids is 2 KiB a
+# request). The grep fails the build if the line ever moves or changes.
+RUN grep -q '^MAX_LOGPROB_TOKEN_IDS = 128$' /opt/vllm/vllm/sampling_params.py \
+    && sed -i 's/^MAX_LOGPROB_TOKEN_IDS = 128$/MAX_LOGPROB_TOKEN_IDS = 512/' /opt/vllm/vllm/sampling_params.py
 RUN uv venv --python 3.12 /opt/venv \
     && cd /opt/vllm && VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT="$VLLM_BASE_COMMIT" \
        uv pip install --python /opt/venv/bin/python . \

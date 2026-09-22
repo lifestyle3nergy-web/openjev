@@ -34,7 +34,7 @@ class Settings:
 
 
 MODEL_VERSION = "openjev-0.1"
-# openjev-0.1 runs on the unmerged vLLM PR #57250; openjev-1.0 follows once that lands upstream.
+# openjev-0.1 is the wire name of this model, not the package version (see __init__.py).
 MODEL_ALIASES = {"openjev-latest", MODEL_VERSION,
                  # accepted so TypeSafe's SDKs work unchanged (their default is jev-latest)
                  "jev-latest", "jev-preview"}
@@ -42,7 +42,7 @@ GEN_MODEL = "diffusiongemma-26b"
 MODELS = [
     {"name": "openjev-latest", "description": "Alias for the newest OpenJev release. Currently openjev-0.1.",
      "release_date": "2026-09-18"},
-    {"name": "openjev-0.1", "description": "OpenJev 0.1: DiffusionGemma 26B-A4B (NVFP4) on vLLM PR #57250.",
+    {"name": "openjev-0.1", "description": "OpenJev 0.1: DiffusionGemma 26B-A4B (NVFP4) on vLLM's structured reads.",
      "release_date": "2026-09-18"},
     {"name": GEN_MODEL, "description": "DiffusionGemma 26B-A4B (NVFP4) text generation at POST /v1/chat/completions.",
      "release_date": "2026-09-18"},

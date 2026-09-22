@@ -8,7 +8,7 @@ from transformers import AutoTokenizer
 
 from openjev.api import create_app
 from openjev.config import Settings
-from openjev.engine import Engine, confidence, to_answer
+from openjev.engine import MAX_LABEL_IDS, Engine, SchemaError, confidence, to_answer
 
 TOKENIZER = "nvidia/diffusiongemma-26B-A4B-it-NVFP4"
 EXAMPLE = {  # Jev's quickstart request, verbatim
@@ -64,8 +64,29 @@ def client(tok, monkeypatch):
 
 def test_labels_are_single_tokens(tok):
     eng = Engine(Settings(), tok)
-    assert len(eng.choice_labels) == 128
+    assert len(eng.choice_labels) == 255  # Jev's limit on one choice's options
     assert eng.choice_labels[:3] == ["A", "B", "C"]
+    assert len(set(eng.choice_labels)) == 255
+
+
+def test_widest_schema_fits_one_read_of_label_ids(tok):
+    """Questions share label lists, so the ids one read asks for stay bounded."""
+    eng = Engine(Settings(canvas=64), tok)
+    schema = eng.build_schema({
+        "a": {"type": "choice", "instructions": "x", "criteria": {f"o{j}": None for j in range(255)}},
+        "b": {"type": "score", "instructions": "y", "criteria": [str(j) for j in range(10)]},
+        "c": {"type": "noul", "instructions": "z"},
+    })
+    labels = {label for q in schema["questions"] for label in q["labels"]}
+    assert len(labels) == 255 + 10 + 2 <= MAX_LABEL_IDS
+
+
+def test_choice_limit_is_jevs(tok):
+    eng = Engine(Settings(), tok)
+    with pytest.raises(SchemaError) as excinfo:
+        eng.build_schema({"a": {"type": "choice", "instructions": "x",
+                                "criteria": {f"o{j}": None for j in range(256)}}})
+    assert str(excinfo.value) == "Too many choices. Must have at most 255 choices."
 
 
 def test_many_questions_chunk(tok):
@@ -336,3 +357,16 @@ def httpx_response(body, status=200):
     import httpx
 
     return httpx.Response(status, json=body)
+
+
+def test_multi_step_read_pins_the_template(tok):
+    """Past one step, accept/renoise would rewrite the template if it were free."""
+    eng = Engine(Settings(canvas=64), tok)
+    schema = eng.build_schema({"a": {"type": "noul", "instructions": "x"},
+                               "b": {"type": "noul", "instructions": "y"}})
+    qs = schema["questions"]
+    template, slots = eng.resolve_template(qs, schema["format"])
+    assert "diffusion_pinned" not in eng._xargs(template, slots, 0, 1)
+    pinned = eng._xargs(template, slots, 0, 4)["diffusion_pinned"]
+    width = eng.canvas_width(template)
+    assert sorted(pinned) == [p for p in range(width) if p not in {s["pos"] for s in slots}]

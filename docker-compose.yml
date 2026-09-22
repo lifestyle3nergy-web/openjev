@@ -1,9 +1,9 @@
-# OpenJev: vLLM (DiffusionGemma, PR #57250) and the Jev-compatible API on :8080,
+# OpenJev: vLLM (DiffusionGemma structured reads) and the Jev-compatible API on :8080,
 # in one container.
 services:
   openjev:
     build: {context: ., dockerfile: docker/Dockerfile}
-    image: razorback16/openjev:0.3.0
+    image: razorback16/openjev:0.4.0
     environment:
       OPENJEV_CANVAS: "64"
       OPENJEV_MAX_NUM_SEQS: ${OPENJEV_MAX_NUM_SEQS:-64}
