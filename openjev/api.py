@@ -13,6 +13,7 @@ import hmac
 import json
 import logging
 import secrets
+import time
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal, Union
 
@@ -25,7 +26,7 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .chat import Generator, MlxGenerator, add_chat_routes
 from .config import MODEL_ALIASES, MODEL_VERSION, MODELS, Settings
-from .engine import Engine, Overloaded, SchemaError, Upstream
+from .engine import Engine, Overloaded, SchemaError, Upstream, model_ns
 
 JSONContent = Union[str, dict[str, Any], list[Any]]
 Described = Union[str, dict[str, Any], list[Any], None]
@@ -197,7 +198,14 @@ def create_app(settings=None, tokenizer=None):
                 denied.headers["x-typesafe-request-id"] = rid
                 denied.headers["x-request-id"] = rid
                 return denied
+        spent = [0]
+        model_ns.set(spent)
+        started = time.perf_counter_ns()
         response = await call_next(request)
+        total_ms = (time.perf_counter_ns() - started) / 1e6
+        model_ms = spent[0] / 1e6
+        response.headers["server-timing"] = (
+            f"model;dur={model_ms:.1f}, server;dur={max(0.0, total_ms - model_ms):.1f}, total;dur={total_ms:.1f}")
         response.headers["x-typesafe-request-id"] = rid
         response.headers["x-request-id"] = rid
         return response

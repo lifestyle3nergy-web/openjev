@@ -24,7 +24,12 @@ RUN git clone --filter=blob:none "$VLLM_REPO" /opt/vllm && git -C /opt/vllm chec
 # request). The grep fails the build if the line ever moves or changes.
 RUN grep -q '^MAX_LOGPROB_TOKEN_IDS = 128$' /opt/vllm/vllm/sampling_params.py \
     && sed -i 's/^MAX_LOGPROB_TOKEN_IDS = 128$/MAX_LOGPROB_TOKEN_IDS = 512/' /opt/vllm/vllm/sampling_params.py
+# Image tokens attend bidirectionally inside their own span, as this checkpoint
+# was trained to expect. The patch fails the build if its anchors moved. It runs
+# under the venv's interpreter: the CUDA base image ships no python3 of its own.
+COPY docker/patches/vision_prefix_lm.py /tmp/
 RUN uv venv --python 3.12 /opt/venv \
+    && /opt/venv/bin/python /tmp/vision_prefix_lm.py /opt/vllm/vllm/model_executor/models/diffusion_gemma.py \
     && cd /opt/vllm && VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT="$VLLM_BASE_COMMIT" \
        uv pip install --python /opt/venv/bin/python . \
     && rm -rf /root/.cache/uv

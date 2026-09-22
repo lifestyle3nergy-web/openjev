@@ -73,6 +73,16 @@ Question types:
 is uniform. `usage.input_tokens` counts prompt tokens, including image tokens.
 `usage.output_tokens` is 0 unless you set `think` (below).
 
+Every response carries a `Server-Timing` header that splits where the time went:
+
+```
+server-timing: model;dur=41.2, server;dur=2.8, total;dur=44.0
+```
+
+`model` is time spent waiting on the model, summed over the request's reads, so it can exceed
+`total` when reads run in parallel. `server` is the rest of the wall clock: compiling the
+schema, tokenizing, validating and serializing. Neither includes your network.
+
 Errors follow the same shapes as Jev, checked against the live API:
 
 - `422` with a FastAPI validation list for a field of the wrong shape.
@@ -217,8 +227,8 @@ RTX PRO 6000 Blackwell, sm_120).
 
 A prebuilt image is on Docker Hub, so there is nothing to compile.
 [`razorback16/openjev`](https://hub.docker.com/r/razorback16/openjev) runs vLLM's DiffusionGemma
-structured reads (PR #57250) in one container with the Jev-compatible API server. It uses CUDA 13 and the
-[pin below](#caveats).
+structured reads in one container with the Jev-compatible API server, on CUDA 13. It pins the
+upstream vLLM commit shown below and makes the two changes listed under [Caveats](#caveats).
 
 ```bash
 git clone https://github.com/razorback16/openjev && cd openjev
@@ -251,11 +261,11 @@ Without Docker:
 
 ```bash
 git clone https://github.com/vllm-project/vllm && cd vllm
-git checkout 1b3b88ec2b7457aa030db4d0e7d8aaf04f6d0fb8   # the same commit the image pins
-# a choice of more than 128 options needs the image's one-line cap change
+VLLM_COMMIT=1b3b88ec2b7457aa030db4d0e7d8aaf04f6d0fb8   # the commit the image pins
+git checkout $VLLM_COMMIT
+# a choice of more than 128 options needs a larger cap, as in the image
 sed -i 's/^MAX_LOGPROB_TOKEN_IDS = 128$/MAX_LOGPROB_TOKEN_IDS = 512/' vllm/sampling_params.py
-VLLM_USE_PRECOMPILED=1 \
-  VLLM_PRECOMPILED_WHEEL_COMMIT=1b3b88ec2b7457aa030db4d0e7d8aaf04f6d0fb8 pip install -e .
+VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COMMIT=$VLLM_COMMIT pip install -e .
 vllm serve nvidia/diffusiongemma-26B-A4B-it-NVFP4 --served-model-name dgemma \
   --diffusion-config '{"canvas_length": 64}' --max-logprobs 32 --enable-prefix-caching \
   --async-scheduling --attention-backend TRITON_ATTN \
@@ -264,6 +274,11 @@ vllm serve nvidia/diffusiongemma-26B-A4B-it-NVFP4 --served-model-name dgemma \
   --override-generation-config '{"max_new_tokens": null}'
 pip install -e path/to/openjev && python -m openjev
 ```
+
+This build reads and generates exactly as the image does, but it prefills images causally: the
+image's other change, bidirectional attention inside each image, is a patch to a vLLM source
+file (see [Caveats](#caveats)). Apply `docker/patches/vision_prefix_lm.py` to the checkout above
+to match the image.
 
 ### Apple silicon
 
@@ -325,13 +340,16 @@ The server reads its settings from the environment.
 
 ## Caveats
 
-- vllm-project/vllm#57250 merged on 2026-09-22, so this project now pins upstream vLLM at that
-  merge commit rather than a fork. The image still makes one change to it: upstream allows 128
-  exact label ids per request, and a 255-option choice needs more, so the build raises that cap
-  to 512.
-- The model's config asks for bidirectional attention inside each image
-  (`use_bidirectional_attention: "vision"`), which vLLM's DiffusionGemma prefill does not yet
-  apply. Image answers are still read from a causal prefill.
+- OpenJev pins upstream vLLM rather than a fork, and makes two changes to that commit when it
+  builds the image. Both are checked at build time, so a moved anchor fails the build instead of
+  shipping silently:
+  - Upstream allows 128 exact label ids per request; a 255-option choice needs more, so the
+    build raises the cap to 512.
+  - The checkpoint's config asks for bidirectional attention inside each image
+    (`use_bidirectional_attention: "vision"`). vLLM applies that for Gemma4 but not for
+    DiffusionGemma, whose `prepare_attn` never passes the image ranges, so image tokens would be
+    prefilled causally. `docker/patches/vision_prefix_lm.py` passes them, reusing vLLM's own
+    `compute_mm_prefix_ranges`. An upstream fix would make it unnecessary.
 - Answer quality is the quality of DiffusionGemma 26B-A4B used in this mode. Evaluate it on your
   own tasks before you rely on it.
 

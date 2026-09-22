@@ -1,4 +1,5 @@
 """Offline tests: the real tokenizer, a stubbed vLLM read."""
+import asyncio
 import json as _json
 import math
 
@@ -8,7 +9,7 @@ from transformers import AutoTokenizer
 
 from openjev.api import create_app
 from openjev.config import Settings
-from openjev.engine import MAX_LABEL_IDS, Engine, SchemaError, confidence, to_answer
+from openjev.engine import MAX_LABEL_IDS, Engine, SchemaError, confidence, model_ns, to_answer
 
 TOKENIZER = "nvidia/diffusiongemma-26B-A4B-it-NVFP4"
 EXAMPLE = {  # Jev's quickstart request, verbatim
@@ -370,3 +371,31 @@ def test_multi_step_read_pins_the_template(tok):
     pinned = eng._xargs(template, slots, 0, 4)["diffusion_pinned"]
     width = eng.canvas_width(template)
     assert sorted(pinned) == [p for p in range(width) if p not in {s["pos"] for s in slots}]
+
+
+def test_server_timing_header(client):
+    """model, server and total, so a caller can tell our overhead from the model's."""
+    r = client.post("/v1/systemone", json=EXAMPLE)
+    assert r.status_code == 200
+    parts = dict(p.strip().split(";dur=") for p in r.headers["server-timing"].split(","))
+    assert set(parts) == {"model", "server", "total"}
+    assert all(float(v) >= 0 for v in parts.values())
+    assert float(parts["total"]) >= float(parts["server"])
+
+
+def test_model_time_reaches_the_response_from_parallel_reads():
+    """A read runs as its own task, and a task gets a *copy* of the context. The
+    accumulator must be mutated, not rebound, or parallel reads report nothing."""
+    async def main():
+        spent = [0]
+        model_ns.set(spent)
+
+        async def read():
+            await asyncio.sleep(0)
+            acc = model_ns.get()
+            acc[0] += 5  # what Engine._post does in its finally
+
+        await asyncio.gather(read(), read(), read())
+        return spent[0]
+
+    assert asyncio.run(main()) == 15

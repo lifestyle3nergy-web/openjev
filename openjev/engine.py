@@ -12,11 +12,20 @@ noise draws, a thought before the read, and sequential chunks. Left unset,
 a read behaves exactly as Jev's contract describes.
 """
 import asyncio
+import contextvars
 import json
 import math
 import random
+import time
 
 import httpx
+
+# Nanoseconds this request spent waiting on the model, including the wait for a
+# free slot. A contextvar holding a one-element list, not a number: a request's
+# reads run as tasks, and a task gets a *copy* of the context, so a rebound
+# value would never reach the request. Mutating the list the copy points at
+# does. api.py installs one per request; without it, this records nothing.
+model_ns = contextvars.ContextVar("model_ns", default=None)
 
 VOCAB = 262144
 TURN_CLOSE = 106
@@ -230,8 +239,16 @@ class Engine:
         return canvas
 
     async def _post(self, path, body):
-        async with self.slots:
-            r = await self.client.post(path, json=body)
+        started = time.perf_counter_ns()
+        try:
+            async with self.slots:
+                r = await self.client.post(path, json=body)
+        finally:
+            # Reads of one request run concurrently, so this sums to more than
+            # the wall clock. It is model time spent, not model time elapsed.
+            spent = model_ns.get()
+            if spent is not None:
+                spent[0] += time.perf_counter_ns() - started
         if 400 <= r.status_code < 500:
             try:
                 msg = r.json().get("error", {}).get("message") or r.json().get("message") or r.text
