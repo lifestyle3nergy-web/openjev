@@ -13,7 +13,7 @@ services:
       OPENJEV_GPU_UTIL: ${OPENJEV_GPU_UTIL:-0.9}
       OPENJEV_API_KEY: ${OPENJEV_API_KEY:-}
       OPENJEV_ORIGIN_SECRET: ${OPENJEV_ORIGIN_SECRET:-}
-      OPENJEV_MODEL_ROUTES: laya-typed-decisions=http://laya:8080,verdict-151m=http://verdict:8080
+      OPENJEV_MODEL_ROUTES: laya-1.0=http://laya:8080,verdict-1.4=http://verdict:8080
       HF_TOKEN: ${HF_TOKEN:-}
     volumes:
       - ${HF_HOME:-~/.cache/huggingface}:/root/.cache/huggingface

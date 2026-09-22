@@ -6,10 +6,11 @@ a classification head, one sequence per question, so an answer is a distribution
 options exactly as with DiffusionGemma. The API layer, the error contract and
 the answer shapes are shared with the vLLM backend; only the read differs.
 
-- Laya: convaiinnovations/laya-typed-decisions (ModernBERT-large, 421M,
-  Apache-2.0), through the `laya` package. Its system_one already takes Jev's
+- laya-1.0: Laya by Nandakishor M / Convai Innovations
+  (github.com/NandhaKishorM/laya), checkpoint convaiinnovations/laya-typed-decisions
+  (ModernBERT-large, 421M, Apache-2.0), through the `laya` package. Its system_one already takes Jev's
   questions; its answers are reshaped here to Jev's exact shapes.
-- Verdict: heman10x/rlcd-modernbert-151m (ModernBERT-base + GLiClass, 151M,
+- verdict-1.4: Verdict by Heman10x, checkpoint heman10x/rlcd-modernbert-151m (ModernBERT-base + GLiClass, 151M,
   Apache-2.0). The prompt format and the per-option-count temperatures follow
   core/formatting.py and core/engine_encoder.py of
   github.com/Heman10x-NGU/Verdict-open-jev (v1.4 inference). That package is
@@ -127,7 +128,7 @@ class EncoderEngine:
 
 
 class LayaEngine(EncoderEngine):
-    model_name = "laya-typed-decisions"
+    model_name = "laya-1.0"
 
     def load(self):
         import laya
@@ -195,7 +196,7 @@ def verdict_prompt(q, context):
 
 
 class VerdictEngine(EncoderEngine):
-    model_name = "verdict-151m"
+    model_name = "verdict-1.4"
     max_choices = 24  # the head has 25 logits, the last kept for "insufficient evidence"
 
     def load(self):

@@ -66,15 +66,18 @@ MODELS = [
      "release_date": "2026-09-18"},
 ]
 
-# The encoder backends each serve one model, under its own name.
+# The encoder backends each serve one model, under its own name. The models are other
+# people's work; the descriptions credit them wherever the model list is shown.
 ENCODER_MODELS = {
-    "laya": {"name": "laya-typed-decisions",
-             "description": "Laya typed-decisions by Convai Innovations: a ModernBERT-large encoder (421M), "
-                            "fine-tuned on the typed-decisions workflows. Text only, 1,024 tokens.",
+    "laya": {"name": "laya-1.0",
+             "description": "Laya by Nandakishor M / Convai Innovations (github.com/NandhaKishorM/laya, Apache-2.0): "
+                            "the laya-typed-decisions checkpoint, a ModernBERT-large encoder (421M) fine-tuned on "
+                            "the typed-decisions workflows. Text only, 1,024 tokens.",
              "release_date": "2026-09-22"},
-    "verdict": {"name": "verdict-151m",
-                "description": "Verdict by Heman10x: a ModernBERT-base + GLiClass encoder (151M), calibrated with "
-                               "RLCD. Text only, 512 tokens, up to 24 choices.",
+    "verdict": {"name": "verdict-1.4",
+                "description": "Verdict by Heman10x (github.com/Heman10x-NGU/Verdict-open-jev, Apache-2.0): "
+                               "rlcd-modernbert-151m, a ModernBERT-base + GLiClass encoder (151M) calibrated with "
+                               "RLCD, with the v1.4 inference engine. Text only, 512 tokens, up to 24 choices.",
                 "release_date": "2026-09-22"},
 }
 

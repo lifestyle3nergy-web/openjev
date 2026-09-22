@@ -12,7 +12,7 @@ from openjev.encoders import EncoderEngine, VerdictEngine, verdict_prompt
 
 REQUEST = {
     "state": "I was charged twice this month.",
-    "model": "laya-typed-decisions",
+    "model": "laya-1.0",
     "questions": {
         "team": {"type": "choice", "instructions": "Which team should handle it?",
                  "criteria": {"outage": "service down", "billing": "charges, refunds", "feature": None}},
@@ -23,7 +23,7 @@ REQUEST = {
 
 
 class FakeEngine(EncoderEngine):
-    model_name = "laya-typed-decisions"
+    model_name = "laya-1.0"
 
     def load(self):
         self.reads = []
@@ -51,7 +51,7 @@ def test_answers_in_jevs_shapes(client):
     r = client.post("/v1/systemone", json=REQUEST)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["model"] == "laya-typed-decisions"
+    assert body["model"] == "laya-1.0"
     assert body["usage"] == {"input_tokens": 99, "output_tokens": 0}
     a = body["answers"]
     assert list(a) == ["team", "tone", "urgent"]
@@ -71,7 +71,7 @@ def test_typesafe_sdk_default_model_is_accepted(client):
 
 
 def test_models_and_unknown_model(client):
-    assert [m["name"] for m in client.get("/v1/models").json()["models"]] == ["laya-typed-decisions"]
+    assert [m["name"] for m in client.get("/v1/models").json()["models"]] == ["laya-1.0"]
     r = client.post("/v1/systemone", json=dict(REQUEST, model="openjev-latest"))
     assert r.status_code == 400
     assert r.json()["detail"]["message"] == "Unknown model: openjev-latest"
@@ -120,28 +120,28 @@ def test_limits(client):
 
 
 def test_routes_forward_other_models(monkeypatch):
-    monkeypatch.setenv("OPENJEV_MODEL_ROUTES", "verdict-151m=http://verdict:8080/, laya-typed-decisions=http://laya:8080")
+    monkeypatch.setenv("OPENJEV_MODEL_ROUTES", "verdict-1.4=http://verdict:8080/, laya-1.0=http://laya:8080")
     monkeypatch.setitem(encoders.ENGINES, "laya", FakeEngine)
     seen = []
 
     def handler(req):
         seen.append(req)
-        return httpx.Response(200, json={"model": "verdict-151m", "answers": {}, "usage": {}})
+        return httpx.Response(200, json={"model": "verdict-1.4", "answers": {}, "usage": {}})
 
     with TestClient(create_app(Settings(backend="laya", origin_secret="s"))) as c:
         c.app.state.routes = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         names = [m["name"] for m in c.get("/v1/models", headers={"x-origin-secret": "s"}).json()["models"]]
-        assert names == ["laya-typed-decisions", "verdict-151m"]  # its own model is not listed twice
-        r = c.post("/v1/systemone", json=dict(REQUEST, model="verdict-151m"), headers={"x-origin-secret": "s"})
-        assert r.json()["model"] == "verdict-151m"
+        assert names == ["laya-1.0", "verdict-1.4"]  # its own model is not listed twice
+        r = c.post("/v1/systemone", json=dict(REQUEST, model="verdict-1.4"), headers={"x-origin-secret": "s"})
+        assert r.json()["model"] == "verdict-1.4"
         assert str(seen[0].url) == "http://verdict:8080/v1/systemone"
         assert seen[0].headers["x-origin-secret"] == "s"
         # its own model is answered here, not forwarded
-        assert c.post("/v1/systemone", json=REQUEST, headers={"x-origin-secret": "s"}).json()["model"] == "laya-typed-decisions"
+        assert c.post("/v1/systemone", json=REQUEST, headers={"x-origin-secret": "s"}).json()["model"] == "laya-1.0"
         assert len(seen) == 1
         # an unreachable route is a 503, like an unreachable vLLM
         c.app.state.routes = httpx.AsyncClient(transport=httpx.MockTransport(lambda req: (_ for _ in ()).throw(httpx.ConnectError("x"))))
-        assert c.post("/v1/systemone", json=dict(REQUEST, model="verdict-151m"), headers={"x-origin-secret": "s"}).status_code == 503
+        assert c.post("/v1/systemone", json=dict(REQUEST, model="verdict-1.4"), headers={"x-origin-secret": "s"}).status_code == 503
 
 
 def test_parse_routes():

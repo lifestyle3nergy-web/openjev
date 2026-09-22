@@ -323,14 +323,15 @@ OPENJEV_MLX_TEST_MODEL=path/to/weights pytest tests/test_mlx_model.py   # tests 
 
 ### Small encoder models
 
-OpenJev also serves two small System One models from other authors. Each is a bidirectional
+OpenJev also serves two small System One models that other people built and trained. The
+credit for them is theirs: OpenJev only puts them behind the same API. Each is a bidirectional
 encoder with a classification head, not a diffusion model. It reads each question in one
 forward pass, so an answer is still a distribution over your options.
 
 | Model id | Model | Size | State limit | Choices |
 |---|---|---|---|---|
-| `laya-typed-decisions` | [convaiinnovations/laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) ([Laya](https://github.com/NandhaKishorM/laya), Convai Innovations). ModernBERT-large, fine-tuned on the typed-decisions workflows. | 421M | 1,024 tokens, options included | up to 128. The options share 256 tokens, so with many options each is cut to a few tokens. Keep to about 20, or split the question. |
-| `verdict-151m` | [heman10x/rlcd-modernbert-151m](https://huggingface.co/heman10x/rlcd-modernbert-151m) ([Verdict](https://github.com/Heman10x-NGU/Verdict-open-jev)). ModernBERT-base with a GLiClass head, calibrated per option count. | 151M | 512 tokens, options included | up to 24 |
+| `laya-1.0` | **[Laya](https://github.com/NandhaKishorM/laya)** by Nandakishor M / [Convai Innovations](https://huggingface.co/convaiinnovations). The [laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) checkpoint: ModernBERT-large, fine-tuned on the typed-decisions workflows. | 421M | 1,024 tokens, options included | up to 128. The options share 256 tokens, so with many options each is cut to a few tokens. Keep to about 20, or split the question. |
+| `verdict-1.4` | **[Verdict](https://github.com/Heman10x-NGU/Verdict-open-jev)** by [Heman10x](https://huggingface.co/heman10x). The [rlcd-modernbert-151m](https://huggingface.co/heman10x/rlcd-modernbert-151m) checkpoint with Verdict's v1.4 inference engine: ModernBERT-base with a GLiClass head, calibrated per option count. | 151M | 512 tokens, options included | up to 24 |
 
 Each model runs in its own container on the same API server: `OPENJEV_BACKEND=laya` or
 `OPENJEV_BACKEND=verdict`. `docker compose up -d` starts both beside the vLLM container on the
@@ -362,6 +363,13 @@ Differences from the DiffusionGemma model:
 - Laya rounds each probability to 4 decimal places.
 - The Verdict prompt format and temperatures are copied from Verdict's inference engine
   (v1.4). For the same input, the probabilities match that engine's own output.
+
+For benchmarks, training details, fine-tuning and known limits, read the authors' own
+repositories: [Laya](https://github.com/NandhaKishorM/laya) and
+[Verdict](https://github.com/Heman10x-NGU/Verdict-open-jev). Laya's
+[`laya`](https://pypi.org/project/laya/) package runs inside the `laya` container. Verdict builds
+on [ModernBERT](https://huggingface.co/answerdotai/ModernBERT-base) (Answer.AI, LightOn) and
+[GLiClass](https://github.com/Knowledgator/GLiClass) (Knowledgator).
 
 ### Settings
 
@@ -418,5 +426,6 @@ pip install -e '.[test]' && pytest
 
 ## License
 
-Apache-2.0. The DiffusionGemma weights are Apache-2.0 (NVIDIA / Google). The Laya
-(Convai Innovations) and Verdict (Heman10x) weights and code are Apache-2.0.
+Apache-2.0. The DiffusionGemma weights are Apache-2.0 (NVIDIA / Google). Laya
+(Nandakishor M / Convai Innovations) and Verdict (Heman10x) are Apache-2.0, weights and code;
+`openjev/encoders.py` adapts Verdict's prompt format and calibration from its repository.
