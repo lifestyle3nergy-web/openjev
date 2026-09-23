@@ -111,7 +111,7 @@ server in vllm-project/vllm#57250.
 |---|---|---|---|
 | `images` | up to 8 | Images the questions ask about, placed ahead of the state. Each is a `data:image/...;base64,` URL or `{"content_type", "base64"}`. JPEG, PNG, WebP or GIF, 5 MB each. | about 280 input tokens per image |
 | `steps` | 1–8, default 1 | Denoise steps per read. More steps let the answers settle against each other. | same tokens, more GPU time |
-| `samples` | 1–32 | Read N times with different noise and average. Replaces the automatic re-reads. | N × input tokens |
+| `samples` | 1–32 | Read N times with different noise and average. Replaces the automatic re-reads. `samples: 1` pins one read, which is the fastest answer. | N × input tokens |
 | `think` | 0–4096 tokens | The model writes a thought first, then reads the answers after it. The number is a hard cap. A thought that hits the cap gets cut off, so give multi-step problems 512 or more. | input tokens twice, plus the thought as output tokens |
 | `sequential` | `true` | For long question lists answered in chunks: read the chunks in order. Each chunk sees the answers already chosen. | one read per chunk, run one after another |
 
@@ -196,8 +196,11 @@ Two consequences follow. An answer cannot go off-schema, because the read scores
 tokens. And the confidence comes from the model's own distribution, not from a number the model
 reports about itself.
 
-If any slot is uncertain (entropy > 0.1), OpenJev re-reads with fresh noise up to four times
-and averages the results. Question ids never reach the model: it sees `q1`, `q2`, `q3`.
+If any slot is uncertain (entropy > 0.1), OpenJev reads three more times with fresh noise and
+averages the four results. The policy is all or nothing: one read, or four. One uncertain question
+causes a re-read of all the questions in the request. The extra reads are the server's policy, so
+they add no tokens to `usage`. Set `samples: 1` to pin a single read. Question ids never reach the
+model: it sees `q1`, `q2`, `q3`.
 
 The vLLM side of this is
 [vllm-project/vllm#57250](https://github.com/vllm-project/vllm/pull/57250), merged on 2026-09-22,
@@ -256,6 +259,13 @@ states:
 | 16 | 43.3 | 367 ms | 369 ms |
 | 32 | 51.7 | 545 ms | 618 ms |
 | 64 | 57.4 | 760 ms | 1109 ms |
+
+One request at a time, on the same GPU, with `samples: 1`:
+
+| Request | p50 | p95 |
+|---|---:|---:|
+| 1 question | 27 ms | 28 ms |
+| 3 questions | 31 ms | 32 ms |
 
 Without Docker:
 
