@@ -140,6 +140,10 @@ class LayaEngine(EncoderEngine):
         import laya
         import torch
 
+        # laya sends an empty HF_TOKEN as "Authorization: Bearer ", which httpx refuses;
+        # compose files pass HF_TOKEN through even when it is not set
+        if not os.environ.get("HF_TOKEN"):
+            os.environ.pop("HF_TOKEN", None)
         # Loaded on the CPU and moved by hand: laya would put its fp32 weights on the GPU,
         # and it falls back to the CPU instead of failing when it cannot use the GPU.
         self.agent = laya.load(self.s.laya_model, device="cpu")
