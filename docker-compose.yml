@@ -27,7 +27,7 @@ services:
           devices: [{driver: nvidia, count: all, capabilities: [gpu]}]
     restart: unless-stopped
 
-  # The encoder models take an estimated 1.5-2.5 GB (Laya) and 0.8-1 GB (Verdict) of GPU memory.
+  # The encoder models take 2.5 GB (Laya) and 1.2 GB (Verdict) of GPU memory, measured at a full batch.
   # Lower OPENJEV_GPU_UTIL to leave vLLM's neighbours that much room.
   laya:
     build: {context: ., dockerfile: docker/Dockerfile.encoder, args: {BACKEND: laya}}

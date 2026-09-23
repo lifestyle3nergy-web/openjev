@@ -337,8 +337,21 @@ Each model runs in its own container on the same API server: `OPENJEV_BACKEND=la
 `OPENJEV_BACKEND=verdict`. `docker compose up -d` starts both beside the vLLM container on the
 same GPU. The `openjev` container passes a request for either model through to its container
 (`OPENJEV_MODEL_ROUTES`), so `:8080` serves all three models. On a GPU both keep their weights in bf16.
-Together they need an estimated 2.5–3.5 GB of GPU memory, so set `OPENJEV_GPU_UTIL` to leave
-that much free. `/v1/models` lists the routed
+Together they need about 3.7 GB of GPU memory, so set `OPENJEV_GPU_UTIL` to leave that much
+free.
+
+Measured on an RTX PRO 6000 with 16 questions per request, GPU memory as `nvidia-smi` reports it
+(CUDA context included). A short state is about 50 tokens; a full one fills the model's limit.
+
+| Model | GPU memory | 16 questions, short state | 16 questions, full state |
+|---|---:|---:|---:|
+| `laya-1.0` | 2.5 GB | 10 ms | 109 ms (16 × 1,024 tokens) |
+| `verdict-1.4` | 1.2 GB | 7 ms | 21 ms (16 × 512 tokens) |
+
+FlashAttention 2 did not help: the same memory, the same speed within 6%, and slower for short
+states. The questions of one request share one state, so their sequences have almost the same
+length and there is little padding to skip. PyTorch's own attention kernel already avoids the
+full attention matrix. `/v1/models` lists the routed
 models even when their containers are not running; a request for one then gets a 503.
 
 To run one alone, on a GPU or on the CPU:
