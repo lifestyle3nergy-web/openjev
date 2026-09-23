@@ -33,6 +33,11 @@ from .engine import Overloaded, SchemaError, model_ns, text_of, to_answer
 log = logging.getLogger("openjev")
 
 
+WARMUP_QUESTIONS = {"c": {"type": "choice", "instructions": "x", "criteria": {"a": None, "b": None}},
+                    "s": {"type": "score", "instructions": "x", "criteria": ["low", "high"]},
+                    "n": {"type": "noul", "instructions": "x"}}
+
+
 class EncoderEngine:
     """The Engine contract (decide, close) for an in-process encoder. The model
     lives on one thread, from loading on; a request is one call on it."""
@@ -45,6 +50,10 @@ class EncoderEngine:
         self.waiting = 0
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"openjev-{self.model_name}")
         self.pool.submit(self.load).result()
+        if self.s.warmup:
+            # the first read compiles Triton launchers (about a second); do it before /health is up
+            qs, _ = self.build_schema(WARMUP_QUESTIONS)
+            self.pool.submit(self.read, "warmup", qs).result()
 
     async def close(self):
         self.pool.shutdown(wait=True, cancel_futures=True)

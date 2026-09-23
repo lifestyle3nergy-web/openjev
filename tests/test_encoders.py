@@ -1,5 +1,6 @@
 """Offline tests for the encoder backends (Laya, Verdict): stubbed models, the real API."""
 import math
+import time
 
 import httpx
 import pytest
@@ -43,7 +44,7 @@ class FakeEngine(EncoderEngine):
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setitem(encoders.ENGINES, "laya", FakeEngine)
-    with TestClient(create_app(Settings(backend="laya"))) as c:
+    with TestClient(create_app(Settings(backend="laya", warmup=False))) as c:
         yield c
 
 
@@ -116,6 +117,12 @@ def test_many_questions_are_read_in_batches(client):
     assert r.json()["usage"]["input_tokens"] == 3 * 99
 
 
+def test_warmup_reads_before_serving(monkeypatch):
+    monkeypatch.setitem(encoders.ENGINES, "laya", FakeEngine)
+    with TestClient(create_app(Settings(backend="laya"))) as c:
+        assert [len(qs) for _, qs in c.app.state.engine.reads] == [3]
+
+
 def test_limits(client):
     many = {"c": {"type": "choice", "criteria": {f"o{i}": None for i in range(256)}}}
     assert client.post("/v1/systemone", json=dict(REQUEST, questions=many)).json() == {
@@ -131,14 +138,16 @@ def test_routes_forward_other_models(monkeypatch):
 
     def handler(req):
         seen.append(req)
+        time.sleep(0.002)  # long enough to show up in Server-Timing
         return httpx.Response(200, json={"model": "verdict-1.4", "answers": {}, "usage": {}})
 
-    with TestClient(create_app(Settings(backend="laya", origin_secret="s"))) as c:
+    with TestClient(create_app(Settings(backend="laya", origin_secret="s", warmup=False))) as c:
         c.app.state.routes = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         names = [m["name"] for m in c.get("/v1/models", headers={"x-origin-secret": "s"}).json()["models"]]
         assert names == ["laya-1.0", "verdict-1.4"]  # its own model is not listed twice
         r = c.post("/v1/systemone", json=dict(REQUEST, model="verdict-1.4"), headers={"x-origin-secret": "s"})
         assert r.json()["model"] == "verdict-1.4"
+        assert not r.headers["server-timing"].startswith("model;dur=0.0,")
         assert str(seen[0].url) == "http://verdict:8080/v1/systemone"
         assert seen[0].headers["x-origin-secret"] == "s"
         # its own model is answered here, not forwarded

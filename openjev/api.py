@@ -277,10 +277,16 @@ async def forward(request, url):
     """Pass a request through to the container serving its model, and its answer back
     unchanged: that container applies the same contract and its own auth."""
     headers = {h: request.headers[h] for h in FORWARD_HEADERS if h in request.headers}
+    started = time.perf_counter_ns()
     try:
         r = await request.app.state.routes.post(url + "/v1/systemone", content=await request.body(), headers=headers)
     except httpx.HTTPError as e:
         return error(503, "api_error", f"inference backend unavailable: {type(e).__name__}", {"retry-after": "2"})
+    finally:
+        # the other container's time, network included, is the model's time here
+        spent = model_ns.get()
+        if spent is not None:
+            spent[0] += time.perf_counter_ns() - started
     keep = {h: r.headers[h] for h in ("content-type", "retry-after") if h in r.headers}
     return Response(r.content, status_code=r.status_code, headers=keep)
 

@@ -36,6 +36,7 @@ class Settings:
     verdict_model: str = field(default_factory=lambda: _env("OPENJEV_VERDICT_MODEL", "heman10x/rlcd-modernbert-151m"))
     device: str = field(default_factory=lambda: _env("OPENJEV_DEVICE", ""))
     encoder_batch: int = field(default_factory=lambda: int(_env("OPENJEV_ENCODER_BATCH", "16")))
+    warmup: bool = field(default_factory=lambda: _env("OPENJEV_WARMUP", "1") != "0")
     # Other System One models served by other OpenJev containers: "name=url,name=url".
     # A request for one of them is passed through unchanged, so one origin serves all.
     model_routes: dict = field(default_factory=lambda: parse_routes(_env("OPENJEV_MODEL_ROUTES", "")))
