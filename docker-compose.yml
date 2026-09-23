@@ -5,7 +5,7 @@
 services:
   openjev:
     build: {context: ., dockerfile: docker/Dockerfile}
-    image: razorback16/openjev:0.4.0
+    image: razorback16/openjev:0.5.0
     environment:
       OPENJEV_CANVAS: "64"
       OPENJEV_MAX_NUM_SEQS: ${OPENJEV_MAX_NUM_SEQS:-64}
@@ -31,7 +31,7 @@ services:
   # Lower OPENJEV_GPU_UTIL to leave vLLM's neighbours that much room.
   laya:
     build: {context: ., dockerfile: docker/Dockerfile.encoder, args: {BACKEND: laya}}
-    image: razorback16/openjev-laya:0.4.0
+    image: razorback16/openjev-laya:0.5.0
     environment: &encoder-env
       # the openjev container forwards the caller's key and origin secret, so these match it
       OPENJEV_API_KEY: ${OPENJEV_API_KEY:-}
@@ -45,7 +45,7 @@ services:
 
   verdict:
     build: {context: ., dockerfile: docker/Dockerfile.encoder, args: {BACKEND: verdict}}
-    image: razorback16/openjev-verdict:0.4.0
+    image: razorback16/openjev-verdict:0.5.0
     environment: *encoder-env
     volumes: *hf
     deploy: *gpu

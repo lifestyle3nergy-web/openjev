@@ -243,7 +243,7 @@ Or without compose:
 
 ```bash
 docker run -d --gpus all --ipc=host -p 127.0.0.1:8080:8080 \
-  -v ~/.cache/huggingface:/root/.cache/huggingface razorback16/openjev:0.4.0
+  -v ~/.cache/huggingface:/root/.cache/huggingface razorback16/openjev:0.5.0
 ```
 
 The model weights (about 18 GB) download on first start into `~/.cache/huggingface`. Use
@@ -330,7 +330,7 @@ forward pass, so an answer is still a distribution over your options.
 
 | Model id | Model | Size | State limit | Choices |
 |---|---|---|---|---|
-| `laya-1.0` | **[Laya](https://github.com/NandhaKishorM/laya)** by Nandakishor M / [Convai Innovations](https://huggingface.co/convaiinnovations). The [laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) checkpoint: ModernBERT-large, fine-tuned on the typed-decisions workflows. | 421M | 1,024 tokens, options included | up to 128. The options share 256 tokens, so with many options each is cut to a few tokens. Keep to about 20, or split the question. |
+| `laya-1.0` | **[Laya](https://github.com/NandhaKishorM/laya)** by Nandakishor M / [Convai Innovations](https://huggingface.co/convaiinnovations). The [laya-typed-decisions](https://huggingface.co/convaiinnovations/laya-typed-decisions) checkpoint: ModernBERT-large, fine-tuned on the typed-decisions workflows. | 421M | 1,024 tokens, options included | up to 255. The options share 256 tokens, so with many options each is cut to a few tokens. Keep to about 20, or split the question. |
 | `verdict-1.4` | **[Verdict](https://github.com/Heman10x-NGU/Verdict-open-jev)** by [Heman10x](https://huggingface.co/heman10x). The [rlcd-modernbert-151m](https://huggingface.co/heman10x/rlcd-modernbert-151m) checkpoint with Verdict's v1.4 inference engine: ModernBERT-base with a GLiClass head, calibrated per option count. | 151M | 512 tokens, options included | up to 24 |
 
 Each model runs in its own container on the same API server: `OPENJEV_BACKEND=laya` or

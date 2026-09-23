@@ -25,9 +25,10 @@ import json
 import logging
 import math
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 
-from .engine import Overloaded, SchemaError, text_of, to_answer
+from .engine import Overloaded, SchemaError, model_ns, text_of, to_answer
 
 log = logging.getLogger("openjev")
 
@@ -37,7 +38,7 @@ class EncoderEngine:
     lives on one thread, from loading on; a request is one call on it."""
 
     model_name = ""
-    max_choices = 128
+    max_choices = 255  # Jev's limit, as for DiffusionGemma
 
     def __init__(self, settings):
         self.s = settings
@@ -116,11 +117,16 @@ class EncoderEngine:
             raise Overloaded(f"{self.model_name} is at capacity. Retry shortly.")
         qs, forced = self.build_schema(questions)
         self.waiting += 1
+        started = time.perf_counter_ns()
         try:
             probs, tokens = (await asyncio.get_running_loop().run_in_executor(self.pool, self.read, state, qs)
                              if qs else ([], 0))
         finally:
             self.waiting -= 1
+            # the model= part of the Server-Timing header, as Engine records it
+            spent = model_ns.get()
+            if spent is not None and qs:
+                spent[0] += time.perf_counter_ns() - started
         answers = dict(forced)
         for q, p in zip(qs, probs):
             answers[q["key"]] = to_answer(q, p)

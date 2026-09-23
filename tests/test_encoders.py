@@ -62,6 +62,11 @@ def test_answers_in_jevs_shapes(client):
     assert a["urgent"] == {"type": "noul", "noul": pytest.approx(0.3)}  # P(yes) is the first option
 
 
+def test_server_timing_counts_the_read(client):
+    timing = client.post("/v1/systemone", json=REQUEST).headers["server-timing"]
+    assert timing.startswith("model;dur=")
+
+
 def test_typesafe_sdk_default_model_is_accepted(client):
     from typesafe_sdk import TypeSafeClient
 
@@ -112,9 +117,9 @@ def test_many_questions_are_read_in_batches(client):
 
 
 def test_limits(client):
-    many = {"c": {"type": "choice", "criteria": {f"o{i}": None for i in range(129)}}}
+    many = {"c": {"type": "choice", "criteria": {f"o{i}": None for i in range(256)}}}
     assert client.post("/v1/systemone", json=dict(REQUEST, questions=many)).json() == {
-        "detail": "Too many choices. Must have at most 128 choices."}
+        "detail": "Too many choices. Must have at most 255 choices."}
     empty = {"c": {"type": "choice", "criteria": {}}}
     assert client.post("/v1/systemone", json=dict(REQUEST, questions=empty)).status_code == 400
 
