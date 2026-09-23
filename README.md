@@ -336,8 +336,9 @@ forward pass, so an answer is still a distribution over your options.
 Each model runs in its own container on the same API server: `OPENJEV_BACKEND=laya` or
 `OPENJEV_BACKEND=verdict`. `docker compose up -d` starts both beside the vLLM container on the
 same GPU. The `openjev` container passes a request for either model through to its container
-(`OPENJEV_MODEL_ROUTES`), so `:8080` serves all three models. Together they need about 4 GB of
-GPU memory, so set `OPENJEV_GPU_UTIL` to leave that much free. `/v1/models` lists the routed
+(`OPENJEV_MODEL_ROUTES`), so `:8080` serves all three models. On a GPU both keep their weights in bf16.
+Together they need an estimated 2.5–3.5 GB of GPU memory, so set `OPENJEV_GPU_UTIL` to leave
+that much free. `/v1/models` lists the routed
 models even when their containers are not running; a request for one then gets a 503.
 
 To run one alone, on a GPU or on the CPU:
@@ -361,6 +362,8 @@ Differences from the DiffusionGemma model:
   probability and scales the others to sum to 1, as Jev's answer shapes require. Verdict
   also ignores a noul's `criteria`.
 - Laya rounds each probability to 4 decimal places.
+- On a GPU the weights are in bf16, not fp32. On 36 test answers per model this changed no
+  answer's top option, and moved probabilities by at most 0.021 (Laya) and 0.007 (Verdict).
 - The Verdict prompt format and temperatures are copied from Verdict's inference engine
   (v1.4). For the same input, the probabilities match that engine's own output.
 

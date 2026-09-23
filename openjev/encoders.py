@@ -132,12 +132,21 @@ class LayaEngine(EncoderEngine):
 
     def load(self):
         import laya
+        import torch
 
-        self.agent = laya.load(self.s.laya_model, device=self.s.device or None)
-        # laya falls back to the CPU instead of failing, at about 10x the latency
+        # Loaded on the CPU and moved by hand: laya would put its fp32 weights on the GPU,
+        # and it falls back to the CPU instead of failing when it cannot use the GPU.
+        self.agent = laya.load(self.s.laya_model, device="cpu")
         self.device = self.agent.device
-        if self.device.type == "cpu" and self.s.device != "cpu" and _cuda_available():
-            raise RuntimeError("laya could not use the GPU; see the warning above")
+        target = encoder_device(self.s)
+        if target.type == "cuda":
+            dtype = gpu_dtype(torch, target)
+            model = self.agent.model.to(dtype)
+            model.act_head.float()  # it takes fp32 features; its output is not used
+            self.agent.model = model.to(target).eval()
+            # system_one runs under autocast in this dtype on a GPU
+            self.agent.device = self.device = target
+            self.agent.dtype = dtype
 
     def read_batch(self, state, qs):
         # instructions go as text: laya would send a missing one to the model as "null"
@@ -166,10 +175,16 @@ class LayaEngine(EncoderEngine):
         return probs, out["usage"]["input_tokens"]
 
 
-def _cuda_available():
+def encoder_device(settings):
     import torch
 
-    return torch.cuda.is_available()
+    return torch.device(settings.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+
+
+def gpu_dtype(torch, device):
+    """bf16 weights on a GPU: half the memory of fp32, and the answers match fp32's
+    to within about 0.02 in probability. fp16 where bf16 is missing (before Ampere)."""
+    return torch.bfloat16 if torch.cuda.get_device_capability(device)[0] >= 8 else torch.float16
 
 
 # Verdict's prompt contract (core/formatting.py)
@@ -206,8 +221,11 @@ class VerdictEngine(EncoderEngine):
         from transformers import AutoTokenizer
 
         self.torch = torch
-        self.device = self.s.device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = GLiClassModel.from_pretrained(self.s.verdict_model).to(self.device).eval()
+        self.device = encoder_device(self.s)
+        model = GLiClassModel.from_pretrained(self.s.verdict_model)
+        if self.device.type == "cuda":
+            model = model.to(gpu_dtype(torch, self.device))
+        self.model = model.to(self.device).eval()
         self.tok = AutoTokenizer.from_pretrained(self.s.verdict_model)
         path = self.s.verdict_model
         cal_file = (os.path.join(path, "calibrator.json") if os.path.isdir(path)
