@@ -2,7 +2,7 @@
 
     OPENJEV_LIVE_URL=http://127.0.0.1:8080 pytest tests/test_live.py -v
 
-Set OPENJEV_API_KEY too if the server wants one. Set OPENJEV_LIVE_GATEWAY=1 when a gateway
+Set OPENJEV_API_KEY or OPENJEV_ORIGIN_SECRET too if the server wants one. Set OPENJEV_LIVE_GATEWAY=1 when a gateway
 (such as codiv's) sits in front and strips `Server-Timing`. Run it after building an image or
 before a cutover. The DiffusionGemma checks run when the server lists `openjev-latest`;
 the encoder checks run for whichever of `laya-1.0` and `verdict-1.4` it lists.
@@ -34,6 +34,8 @@ HOTDOG = "data:image/jpeg;base64," + base64.b64encode(
 @pytest.fixture(scope="module")
 def client():
     headers = {"Authorization": f"Bearer {os.environ['OPENJEV_API_KEY']}"} if os.environ.get("OPENJEV_API_KEY") else {}
+    if os.environ.get("OPENJEV_ORIGIN_SECRET"):
+        headers["X-Origin-Secret"] = os.environ["OPENJEV_ORIGIN_SECRET"]
     with httpx.Client(base_url=URL, headers=headers, timeout=300) as c:
         yield c
 
