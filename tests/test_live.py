@@ -2,7 +2,8 @@
 
     OPENJEV_LIVE_URL=http://127.0.0.1:8080 pytest tests/test_live.py -v
 
-Set OPENJEV_API_KEY too if the server wants one. Run it after building an image or
+Set OPENJEV_API_KEY too if the server wants one. Set OPENJEV_LIVE_GATEWAY=1 when a gateway
+(such as codiv's) sits in front and strips `Server-Timing`. Run it after building an image or
 before a cutover. The DiffusionGemma checks run when the server lists `openjev-latest`;
 the encoder checks run for whichever of `laya-1.0` and `verdict-1.4` it lists.
 """
@@ -16,6 +17,7 @@ import httpx
 import pytest
 
 URL = os.environ.get("OPENJEV_LIVE_URL")
+GATEWAY = os.environ.get("OPENJEV_LIVE_GATEWAY") == "1"
 pytestmark = pytest.mark.skipif(not URL, reason="set OPENJEV_LIVE_URL to a running OpenJev server")
 
 QUESTIONS = {
@@ -52,7 +54,7 @@ def dgemma(models):
 def ask(client, questions=QUESTIONS, state=STATE, model="openjev-latest", **extra):
     r = client.post("/v1/systemone", json={"model": model, "state": state, "questions": questions, **extra})
     assert r.status_code == 200, r.text
-    assert "server-timing" in r.headers
+    assert GATEWAY or "server-timing" in r.headers
     return r.json()
 
 
