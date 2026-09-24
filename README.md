@@ -17,6 +17,18 @@ unchanged. It runs
 
 OpenJev is an independent project. It is not affiliated with or endorsed by TypeSafe AI.
 
+## Models
+
+| Model id | Model | Size | Input | Choices | Runs on |
+|---|---|---|---|---|---|
+| `openjev-latest` (`openjev-0.1`) | [DiffusionGemma 26B-A4B](https://huggingface.co/nvidia/diffusiongemma-26B-A4B-it-NVFP4) (NVIDIA / Google), read as a diffusion canvas | 26B total, 4B active | text and images | up to 255 | vLLM (NVIDIA GPU) or MLX (Apple silicon) |
+| `laya-1.0` | [Laya](https://github.com/NandhaKishorM/laya) by Nandakishor M / Convai Innovations | 421M | text, 1,024 tokens | up to 255 | PyTorch, GPU or CPU |
+| `verdict-1.4` | [Verdict](https://github.com/Heman10x-NGU/Verdict-open-jev) by Heman10x | 151M | text, 512 tokens | up to 24 | PyTorch, GPU or CPU |
+
+`diffusiongemma-26b` is the same DiffusionGemma for [text generation](#text-generation). All
+weights are Apache-2.0. Laya and Verdict are other people's models: see
+[Small encoder models](#small-encoder-models) for details and credit.
+
 ## Try it
 
 ```bash
