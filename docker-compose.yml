@@ -2,9 +2,10 @@
 # in one container. Two small encoder models run beside it on the same GPU, each
 # in its own container; the openjev container passes their requests through, so
 # :8080 serves all three models.
+# Build docker/Dockerfile.base first: all three images start FROM it and share its layers.
 services:
   openjev:
-    build: {context: ., dockerfile: docker/Dockerfile, target: openjev}
+    build: {context: ., dockerfile: docker/Dockerfile}
     image: razorback16/openjev:0.5.0
     environment:
       OPENJEV_CANVAS: "64"
@@ -31,7 +32,7 @@ services:
   # The encoder models take 2.5 GB (Laya) and 1.2 GB (Verdict) of GPU memory, measured at a full batch.
   # Lower OPENJEV_GPU_UTIL to leave vLLM's neighbours that much room.
   laya:
-    build: {context: ., dockerfile: docker/Dockerfile, target: encoder, args: {BACKEND: laya}}
+    build: {context: ., dockerfile: docker/Dockerfile.laya}
     image: razorback16/openjev-laya:0.5.0
     environment: &encoder-env
       # the openjev container forwards the caller's key and origin secret, so these match it
@@ -45,7 +46,7 @@ services:
     restart: unless-stopped
 
   verdict:
-    build: {context: ., dockerfile: docker/Dockerfile, target: encoder, args: {BACKEND: verdict}}
+    build: {context: ., dockerfile: docker/Dockerfile.verdict}
     image: razorback16/openjev-verdict:0.5.0
     environment: *encoder-env
     volumes: *hf

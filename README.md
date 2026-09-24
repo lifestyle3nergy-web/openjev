@@ -199,8 +199,15 @@ docker run -d --gpus all --ipc=host -p 127.0.0.1:8080:8080 \
   -v ~/.cache/huggingface:/root/.cache/huggingface razorback16/openjev:0.5.0
 ```
 
-The first start downloads the weights (about 18 GB) into `~/.cache/huggingface`. Use
-`docker compose build` to build the image yourself. vLLM listens only inside the container.
+The first start downloads the weights (about 18 GB) into `~/.cache/huggingface`. To build the
+images yourself, build the shared base first, then run `docker compose build`:
+
+```bash
+docker build -f docker/Dockerfile.base -t razorback16/openjev-base:cu130-torch2.13 .
+docker compose build
+```
+
+vLLM listens only inside the container.
 Set `OPENJEV_UPSTREAM` to use a vLLM server that you already run.
 
 Measured on an RTX PRO 6000 at 38% of the GPU, with 3 questions per request and cache-busted
@@ -294,7 +301,7 @@ states were slower.
 To run one model alone, on a GPU or on the CPU:
 
 ```bash
-docker build -f docker/Dockerfile --target encoder --build-arg BACKEND=laya -t openjev-laya .
+docker build -f docker/Dockerfile.laya -t openjev-laya .   # after the base, as above
 docker run -d --gpus all -p 127.0.0.1:8081:8080 \
   -v ~/.cache/huggingface:/root/.cache/huggingface openjev-laya
 # or without Docker:
@@ -303,8 +310,8 @@ pip install -e '.[laya]' && OPENJEV_BACKEND=laya python -m openjev
 
 A server that runs one of these models alone also accepts `jev-latest` and `jev-preview` for it.
 
-All three images come from `docker/Dockerfile` and share the CUDA, Python and PyTorch layers
-(about 8.7 GB on disk). A server that runs all three stores these layers once, about 21 GB in
+Each image has its own Dockerfile in `docker/`. All three start from `docker/Dockerfile.base`
+and share its CUDA, Python and PyTorch layers (about 8.7 GB on disk). A server that runs all three stores these layers once, about 21 GB in
 total.
 
 Differences from the DiffusionGemma model:
