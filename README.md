@@ -357,12 +357,16 @@ models even when their containers are not running; a request for one then gets a
 To run one alone, on a GPU or on the CPU:
 
 ```bash
-docker build -f docker/Dockerfile.encoder --build-arg BACKEND=laya -t openjev-laya .
+docker build -f docker/Dockerfile --target encoder --build-arg BACKEND=laya -t openjev-laya .
 docker run -d --gpus all -p 127.0.0.1:8081:8080 \
   -v ~/.cache/huggingface:/root/.cache/huggingface openjev-laya
 # or without Docker:
 pip install -e '.[laya]' && OPENJEV_BACKEND=laya python -m openjev
 ```
+
+All three images come from `docker/Dockerfile` and share its CUDA, Python and PyTorch layers
+(about 8.7 GB on disk), so a server that runs all three pulls and stores those once. Together
+they take about 21 GB on disk.
 
 A server that runs one of these models alone also accepts `jev-latest` and `jev-preview` for it.
 
@@ -438,7 +442,11 @@ The server reads its settings from the environment.
 
 ```bash
 pip install -e '.[test]' && pytest
+OPENJEV_LIVE_URL=http://127.0.0.1:8080 pytest tests/test_live.py   # end to end against a running server
 ```
+
+Run the live checks after building an image and before a cutover. They cover every read
+option, images, chat, and whichever encoder models the server lists.
 
 ## License
 
