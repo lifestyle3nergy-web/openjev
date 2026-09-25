@@ -24,10 +24,12 @@ OpenJev is an independent project. It is not affiliated with or endorsed by Type
 | `openjev-latest` (`openjev-0.1`) | [DiffusionGemma 26B-A4B](https://huggingface.co/nvidia/diffusiongemma-26B-A4B-it-NVFP4) (NVIDIA / Google), read as a diffusion canvas | 26B total, 4B active | text and images | up to 255 | vLLM (NVIDIA GPU) or MLX (Apple silicon) |
 | `laya-1.0` | [Laya](https://github.com/NandhaKishorM/laya) by Nandakishor M / Convai Innovations | 421M | text, 1,024 tokens | up to 255 | PyTorch, GPU or CPU |
 | `verdict-1.4` | [Verdict](https://github.com/Heman10x-NGU/Verdict-open-jev) by Heman10x | 151M | text, 512 tokens | up to 24 | PyTorch, GPU or CPU |
+| `clm-v0.1` | [CLM](https://github.com/Contrastive-LM/CLM) by Contrastive-LM: contrastive heads over Qwen3-8B | 8B + 2 × 9.4M | text, 2,048 tokens | up to 255 | vLLM (NVIDIA GPU) |
+| `jevk5-0.2` | [JevK5](https://github.com/allebee/jevk5) by Alibi Serikbay: Qwen3.5-4B with a distilled LoRA, read by its answer letters | 4B | text, 16,384 tokens | up to 255 | vLLM (NVIDIA GPU) |
 
 `diffusiongemma-26b` is the same DiffusionGemma for [text generation](#text-generation). All
-weights are Apache-2.0. Laya and Verdict are other people's models: see
-[Small encoder models](#small-encoder-models) for details and credit.
+weights are Apache-2.0. Laya, Verdict, CLM and JevK5 are other people's models: see
+[Small encoder models](#small-encoder-models), [CLM](#clm) and [JevK5](#jevk5) for details and credit.
 
 ## Try it
 
@@ -348,25 +350,138 @@ For benchmarks, training, fine-tuning and known limits, read the authors' reposi
 [ModernBERT](https://huggingface.co/answerdotai/ModernBERT-base) (Answer.AI, LightOn) and
 [GLiClass](https://github.com/Knowledgator/GLiClass) (Knowledgator).
 
+### CLM
+
+[CLM](https://github.com/Contrastive-LM/CLM) (Contrastive Language Model) is Contrastive-LM's
+model; the credit is theirs. The [CLM-v0.1-8B](https://huggingface.co/Contrastive-LM/CLM-v0.1-8B)
+checkpoint is two small heads (a state head and an action head, 9.4M parameters each) on top of a
+frozen [Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B). Qwen3-8B turns the state (with the
+question appended) and each option into its last-token embedding. The heads project them to 512
+dimensions, and an answer is the softmax over the scaled cosine of each option with the state.
+
+The `clm` image (`docker/Dockerfile.clm`) runs vLLM's pooling runner for Qwen3-8B and the heads
+in one container. vLLM is the same pinned commit as the main image, without its changes. The
+prompt layout, the heads and the scoring come from Contrastive-LM's
+[`contrastive-lm`](https://pypi.org/project/contrastive-lm/) package (0.1.0).
+
+```bash
+docker build -f docker/Dockerfile.clm -t openjev-clm .   # after the base, as above
+docker run -d --gpus all --ipc host -p 127.0.0.1:8083:8080 \
+  -v ~/.cache/huggingface:/root/.cache/huggingface openjev-clm
+```
+
+Next to DiffusionGemma, run `docker compose --profile clm up -d` and add
+`clm-v0.1=http://clm:8080` to `OPENJEV_MODEL_ROUTES`. CLM runs its own vLLM, so lower the
+`openjev` service's `OPENJEV_GPU_UTIL` to leave it room; `OPENJEV_CLM_GPU_UTIL` (default 0.12) is its
+share of the GPU.
+
+The default weights are [Qwen/Qwen3-8B-FP8](https://huggingface.co/Qwen/Qwen3-8B-FP8). On an
+RTX 3090 (Ampere, no FP8 compute) vLLM runs them as weight-only FP8 through Marlin. On 581
+four-way SQuAD questions, FP8 and bf16 agreed on 98.5% of top options. The mean embedding cosine
+was 0.9992 and accuracy went from 89.7% to 88.8%.
+[RedHatAI/Qwen3-8B-FP8-dynamic](https://huggingface.co/RedHatAI/Qwen3-8B-FP8-dynamic) does not
+start on Ampere with this vLLM. Set `OPENJEV_MODEL=Qwen/Qwen3-8B` for bf16.
+
+Measured on one RTX 3090 at `OPENJEV_GPU_UTIL=0.85`. Each request has a unique state (a SQuAD
+paragraph) and 3 questions, about 550 prompt tokens in all:
+
+| Weights | Weights in GPU memory | KV / prefix cache | 1 request at a time | 64 at a time |
+|---|---:|---:|---:|---:|
+| Qwen3-8B-FP8 | 7.7 GB | 78k tokens | 99 ms | 18 req/s, 9.6k prompt tokens/s |
+| Qwen3-8B (bf16) | 14.1 GB | 33k tokens | 130 ms | 18 req/s, 9.8k prompt tokens/s |
+
+The GPU is the limit: prefill is compute-bound, and weight-only FP8 does not add compute on Ampere.
+What FP8 buys there is latency at low load and 2.4 times the prefix cache.
+`--max-num-batched-tokens 8192` gave no gain.
+
+Differences from the other models:
+
+- Text only, as for the encoder models. A state longer than 2,048 tokens loses its start, not
+  its end, so the question (which comes last) survives. Upstream CLM cuts the end (see
+  [CLM PR #6](https://github.com/Contrastive-LM/CLM/pull/6)).
+- The server keeps the embeddings and projections of recent texts (`OPENJEV_CLM_EMBED_CACHE`,
+  `OPENJEV_CLM_CACHE`). `usage.input_tokens` counts only the texts it had to embed, so a repeated
+  request reports 0.
+- Score questions can ignore the state. Upstream reports one level winning whatever the state
+  says ([CLM issue #3](https://github.com/Contrastive-LM/CLM/issues/3)), and in our checks a
+  thankful customer scored "annoyed". Choice and noul questions follow the state. Evaluate score
+  questions on your own data before you rely on them.
+
+### JevK5
+
+[JevK5](https://github.com/allebee/jevk5) is Alibi Serikbay's model; the credit is theirs. The
+[JevK5](https://huggingface.co/alibiserikbay/JevK5) checkpoint (v0.2) is Qwen3.5-4B with a LoRA
+distilled from Qwen3.6-27B, merged. Each question becomes a JSON prompt with its options lettered
+A to P, and the answer is a softmax over those letters' next-token logits under one calibration
+temperature (1.532, from the checkpoint's `jevk5_config.json`). The readout is
+[SemIf's](https://github.com/TheoLeeCJ/SemIf). A question with more than 16 options takes several
+passes, combined as JevK5 combines them.
+
+The `jevk5` image (`docker/Dockerfile.jevk5`) runs the checkpoint in bf16 on vLLM, the same pinned
+commit as the main image without its changes, and asks it for the letters' logprobs. The prompt
+and the combining of passes come from JevK5's own [`jevk5`](https://github.com/allebee/jevk5)
+package (0.2.2). JevK5's own server reads one question at a time; here vLLM batches the questions
+of all requests together.
+
+```bash
+docker build -f docker/Dockerfile.jevk5 -t openjev-jevk5 .   # after the base, as above
+docker run -d --gpus all --ipc host -p 127.0.0.1:8084:8080 \
+  -v ~/.cache/huggingface:/root/.cache/huggingface openjev-jevk5
+```
+
+Next to DiffusionGemma, run `docker compose --profile jevk5 up -d` and add
+`jevk5-0.2=http://jevk5:8080` to `OPENJEV_MODEL_ROUTES`, as for CLM. `OPENJEV_JEVK5_GPU_UTIL`
+(default 0.12) is its share of the GPU.
+
+On JevBench's 231 public items, OpenJev and JevK5's own published v0.2 run gave the same top
+answer on all 231 and the same input token count on all 231, so the prompts are identical.
+Probabilities differed by 0.0012 at the median and 0.055 at most (vLLM's kernels are not
+transformers'). Both scored 86.6%.
+
+Measured on one RTX 3090 at `OPENJEV_GPU_UTIL=0.85` (7.9 GB of weights, 284k KV tokens), with the
+same requests as for CLM:
+
+| Request | 1 at a time | 32–64 at a time |
+|---|---:|---:|
+| 3 questions (a 4-way choice, a noul, a 3-level score), about 700 prompt tokens | 116 ms | 8–11 req/s, 8k prompt tokens/s |
+| one 10-way choice | 75 ms | 20 req/s |
+
+The GPU is the limit (100% busy at its 350 W cap). `--max-num-batched-tokens 8192` gave no gain.
+Qwen3.5's linear-attention layers make vLLM cache prompts in blocks of 528 tokens, so questions
+about a state shorter than that do not share its prefill; longer states do.
+
+Differences from the other models:
+
+- Text only, as for the encoder models. A read longer than 16,384 tokens gets a 400, never a cut.
+- `usage.input_tokens` counts every pass, as JevK5 does: each question reads the state again.
+- The image sets `VLLM_USE_FLASHINFER_SAMPLER=0`. A read takes one greedy token and keeps only
+  logprobs, and FlashInfer's sampler would need a CUDA compiler the image does not have.
+
 ### Settings
 
 The server reads its settings from the environment.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `OPENJEV_BACKEND` | `vllm` | `mlx` to run the model in-process on Apple silicon. `laya` or `verdict` for a [small encoder model](#small-encoder-models) |
+| `OPENJEV_BACKEND` | `vllm` | `mlx` to run the model in-process on Apple silicon. `laya` or `verdict` for a [small encoder model](#small-encoder-models), `clm` for [CLM](#clm), `jevk5` for [JevK5](#jevk5) |
 | `OPENJEV_MODEL_ROUTES` | unset | `name=url,...`: other OpenJev servers. A request for one of these model names goes to that server unchanged. |
 | `OPENJEV_LAYA_MODEL` | `convaiinnovations/laya-typed-decisions` | Laya weights: a local directory or a Hugging Face id |
 | `OPENJEV_VERDICT_MODEL` | `heman10x/rlcd-modernbert-151m` | Verdict weights: a local directory or a Hugging Face id |
-| `OPENJEV_DEVICE` | unset | `laya`/`verdict`: `cuda` or `cpu`. Unset uses CUDA when a GPU is present |
+| `OPENJEV_DEVICE` | unset | `laya`/`verdict`/`clm`: `cuda` or `cpu` (for `clm`, the heads). Unset uses CUDA when a GPU is present |
 | `OPENJEV_ENCODER_BATCH` | `16` | `laya`/`verdict`: the most questions in one forward pass. A larger request uses more passes. |
+| `OPENJEV_CLM_HEAD` | `Contrastive-LM/CLM-v0.1-8B` | `clm`: the heads, a Hugging Face repo holding `CLM_v0.1-8B.pt` or a local `.pt` file |
+| `OPENJEV_CLM_MAX_TOKENS` | `2048` | `clm`: longest text sent to Qwen3-8B. A longer one loses its start. |
+| `OPENJEV_CLM_WORKERS` | `32` | `clm`: requests read at once, so that vLLM batches them |
+| `OPENJEV_CLM_CACHE` | `256MiB` | `clm`: GPU memory for cached projections, a size or a fraction of the GPU. `0` turns it off. |
+| `OPENJEV_CLM_EMBED_CACHE` | `20000` | `clm`: embeddings kept in host memory (16 KB each) |
+| `OPENJEV_JEVK5_WORKERS` | `32` | `jevk5`: reads in flight to vLLM at once |
 | `OPENJEV_UPSTREAM` | unset | external vLLM server URL. When set, the container does not start its own |
-| `OPENJEV_MODEL` | `nvidia/diffusiongemma-26B-A4B-it-NVFP4` | weights for the built-in vLLM |
+| `OPENJEV_MODEL` | `nvidia/diffusiongemma-26B-A4B-it-NVFP4` | weights for the built-in vLLM. `Qwen/Qwen3-8B-FP8` for `clm`, `alibiserikbay/JevK5` for `jevk5` |
 | `OPENJEV_MLX_MODEL` | `mlx-community/diffusiongemma-26B-A4B-it-4bit` | MLX weights: a local directory or a Hugging Face id. Also gives the tokenizer. `8bit` and `bf16` builds are also available. |
 | `OPENJEV_MLX_MAX_PROMPT` | `32768` | longest request, in tokens, before a 400 |
-| `OPENJEV_GPU_UTIL` | `0.9` | vLLM `--gpu-memory-utilization` |
+| `OPENJEV_GPU_UTIL` | `0.9` | vLLM `--gpu-memory-utilization`. `0.85` for `clm` and `jevk5` |
 | `OPENJEV_MAX_NUM_SEQS` | `64` | vLLM `--max-num-seqs` |
-| `OPENJEV_MAX_MODEL_LEN` | `65536` | vLLM `--max-model-len` |
+| `OPENJEV_MAX_MODEL_LEN` | `65536` | vLLM `--max-model-len`. `2048` for `clm`, `16384` for `jevk5` |
 | `OPENJEV_VLLM_ARGS` | unset | extra `vllm serve` flags |
 | `OPENJEV_CANVAS` | `64` | canvas length. Also sets the built-in vLLM's `--diffusion-config` |
 | `OPENJEV_MAX_INFLIGHT` | `64` | reads in flight to vLLM |
@@ -388,6 +503,7 @@ The server reads its settings from the environment.
     255 options.
   - `docker/patches/vision_prefix_lm.py` gives image tokens bidirectional attention, as the
     checkpoint config asks. Upstream vLLM does this for Gemma4 but not yet for DiffusionGemma.
+- The `clm` and `jevk5` images pin the same vLLM commit with neither change.
 - Answer quality is the quality of DiffusionGemma 26B-A4B in this mode. Evaluate it on your own
   tasks before you rely on it.
 

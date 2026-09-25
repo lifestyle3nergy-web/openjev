@@ -31,11 +31,22 @@ class Settings:
     gen_max_inflight: int = field(default_factory=lambda: int(_env("OPENJEV_GEN_MAX_INFLIGHT", "8")))
     gen_max_queue: int = field(default_factory=lambda: int(_env("OPENJEV_GEN_MAX_QUEUE", "32")))
     gen_max_tokens: int = field(default_factory=lambda: int(_env("OPENJEV_GEN_MAX_TOKENS", "8192")))
-    # The encoder backends (OPENJEV_BACKEND=laya or verdict). OPENJEV_DEVICE empty picks CUDA when present.
+    # The encoder backends (OPENJEV_BACKEND=laya, verdict, clm or jevk5). OPENJEV_DEVICE empty picks CUDA when present.
     laya_model: str = field(default_factory=lambda: _env("OPENJEV_LAYA_MODEL", "convaiinnovations/laya-typed-decisions"))
     verdict_model: str = field(default_factory=lambda: _env("OPENJEV_VERDICT_MODEL", "heman10x/rlcd-modernbert-151m"))
     device: str = field(default_factory=lambda: _env("OPENJEV_DEVICE", ""))
     encoder_batch: int = field(default_factory=lambda: int(_env("OPENJEV_ENCODER_BATCH", "16")))
+    # CLM (OPENJEV_BACKEND=clm): its heads read Qwen3-8B embeddings from the vLLM server at OPENJEV_UPSTREAM.
+    # OPENJEV_CLM_HEAD is a Hugging Face repo holding CLM_v0.1-8B.pt, or a local .pt file.
+    clm_head: str = field(default_factory=lambda: _env("OPENJEV_CLM_HEAD", "Contrastive-LM/CLM-v0.1-8B"))
+    clm_max_tokens: int = field(default_factory=lambda: int(_env("OPENJEV_CLM_MAX_TOKENS", "2048")))
+    clm_workers: int = field(default_factory=lambda: int(_env("OPENJEV_CLM_WORKERS", "32")))
+    clm_cache: str = field(default_factory=lambda: _env("OPENJEV_CLM_CACHE", "256MiB"))
+    clm_embed_cache: int = field(default_factory=lambda: int(_env("OPENJEV_CLM_EMBED_CACHE", "20000")))
+    # JevK5 (OPENJEV_BACKEND=jevk5): the weights the vLLM server at OPENJEV_UPSTREAM serves. Their
+    # jevk5_config.json holds the calibration temperature.
+    jevk5_model: str = field(default_factory=lambda: _env("OPENJEV_MODEL", "alibiserikbay/JevK5"))
+    jevk5_workers: int = field(default_factory=lambda: int(_env("OPENJEV_JEVK5_WORKERS", "32")))
     warmup: bool = field(default_factory=lambda: _env("OPENJEV_WARMUP", "1") != "0")
     # Other System One models served by other OpenJev containers: "name=url,name=url".
     # A request for one of them is passed through unchanged, so one origin serves all.
@@ -80,6 +91,16 @@ ENCODER_MODELS = {
                                "rlcd-modernbert-151m, a ModernBERT-base + GLiClass encoder (151M) calibrated with "
                                "RLCD, with the v1.4 inference engine. Text only, 512 tokens, up to 24 choices.",
                 "release_date": "2026-09-22"},
+    "clm": {"name": "clm-v0.1",
+            "description": "CLM v0.1 by Contrastive-LM (github.com/Contrastive-LM/CLM, Apache-2.0): state and action "
+                           "projection heads over Qwen3-8B last-token embeddings, here with Qwen3-8B-FP8 on vLLM. "
+                           "Text only, 2,048 tokens.",
+            "release_date": "2026-09-24"},
+    "jevk5": {"name": "jevk5-0.2",
+              "description": "JevK5 v0.2 by Alibi Serikbay (github.com/allebee/jevk5, Apache-2.0): Qwen3.5-4B with a "
+                             "LoRA distilled from Qwen3.6-27B, merged, read as a softmax over the answer letters' "
+                             "logits (SemIf's readout), on vLLM. Text only, 16,384 tokens.",
+              "release_date": "2026-09-25"},
 }
 
 
